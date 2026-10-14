@@ -190,6 +190,11 @@ static int build_romfs_cli(const char *dir, const char *out) {
 
 int main(int argc, char **argv) {
     plat_init();
+#if defined(SDL_PLATFORM_IOS)
+    // Before any window exists: ask the window scene for landscape and a landscape 16:9 minimum size, so the window
+    // the system creates for this app is the wide one a 16:9 game needs (runtime/platform/ios_ui.m).
+    { extern void plat_ios_lock_landscape(void); plat_ios_lock_landscape(); }
+#endif
 #ifdef _WIN32
     setvbuf(stderr, NULL, _IONBF, 0);  // the Windows CRT treats _IOLBF as full buffering
 #else

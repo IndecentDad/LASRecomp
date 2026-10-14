@@ -34,6 +34,28 @@ Darwin has no `MAP_FIXED_NOREPLACE`, so `mmap(MAP_FIXED)` would silently clobber
   `codesign -d --entitlements -`) and launches with it.
 * `com.apple.developer.kernel.increased-memory-limit` — for the guest heap's jetsam budget.
 
+## The window is its own problem (iPadOS 26 windowed apps)
+
+SDL's UIKit backend predates iPadOS 26's windowed apps: it computes the SDL view's frame from `UIScreen.bounds`,
+which is **always the portrait size** (1024x1366 pt on the iPad Air 13"). In a landscape window the view therefore
+comes out as a portrait rectangle parked at the window's origin, and the game (16:9, letterboxed inside that
+rectangle) shows up as a box in the corner of the screen - with `SDL_GetWindowSizeInPixels` also reporting the
+screen instead of the window. Measured on the device: scene bounds 1366x1024 pt (landscape) while the SDL view was
+1024x1366 pt and the drawable 2048x2732 px.
+
+Fixed in `runtime/nvn/metal.m` (`ui_drawable_size`, used by both the start screen and the game loop):
+
+* the SDL view is fitted to the window it is in (`view.frame = window.bounds`, re-applied if SDL moves it), so the
+  drawable becomes the window's real size (2732x2048 px = 1366x1024 pt here), and
+* the drawable size comes from that view, not from SDL's report.
+
+`runtime/platform/ios_ui.m` additionally asks the window scene for landscape and constrains the window with
+`UISceneSizeRestrictions` (minimum: a landscape 16:9 rectangle; maximum: the screen's landscape bounds), which is
+the iPadOS 26 API for exactly this - a game that must not be a tall portrait window.
+
+Result on the device: the start screen and the game fill the screen in landscape, and the 16:9 movies are
+full-width and centred (with the ~12% letterbox a 16:9 film has on the iPad's 4:3 screen).
+
 ## Memory
 
 * The host's own run at 2560x1440 logged `mem 1421 MB` (guest + GPU + textures) at 60 fps with the opening movie

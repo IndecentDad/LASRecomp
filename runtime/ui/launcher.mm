@@ -1021,7 +1021,7 @@ extern "C" void launcher_run(const char *root) {
 
 #ifdef __APPLE__
         int w, h;
-        SDL_GetWindowSizeInPixels(win, &w, &h);
+        { extern void ui_drawable_size(SDL_Window *, int *, int *); ui_drawable_size(win, &w, &h); }
         layer.drawableSize = CGSizeMake(w, h);
         @autoreleasepool {
             id<CAMetalDrawable> drawable = [layer nextDrawable];
@@ -1049,9 +1049,6 @@ extern "C" void launcher_run(const char *root) {
 
             ImVec2 ds = io.DisplaySize;
             float s = ds.y / 720.0f;  // layout scale (fonts are built for ~2x)
-#ifdef SDL_PLATFORM_IOS
-            s *= 1.35f;  // an iPad has ~1.4x the points of a desktop window: the same UI would look tiny
-#endif
             ImGui::GetIO().FontGlobalScale = s * 0.5f;
             ImDrawList *bg = ImGui::GetBackgroundDrawList();
             if (g_bg) {  // cover the window, keep the aspect

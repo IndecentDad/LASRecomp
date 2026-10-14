@@ -33,13 +33,21 @@
             </array>
         </dict>
     </dict>
-    <!-- the game is 16:9; landscape keeps its framing (the renderer copes with other shapes, but the UI is designed
-         for this one) -->
+    <!-- the game is 16:9; landscape keeps its framing (the renderer copes with other shapes, but its movies and
+         overlay UI are placed for a wide frame). iPadOS 26 hands apps a resizable window and does not force these,
+         so the app also asks the window scene for landscape at startup (runtime/platform/ios_ui.m). -->
     <key>UISupportedInterfaceOrientations~ipad</key>
     <array>
         <string>UIInterfaceOrientationLandscapeLeft</string>
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <!-- deprecated in iPadOS 26 (apps are windows there) but still honored on older systems: a landscape-only game -->
+    <key>UIRequiresFullScreen</key><true/>
     <!-- the user brings their own game files: expose the app's Documents folder (Finder / Files) -->
     <key>UIFileSharingEnabled</key><true/>
     <key>LSSupportsOpeningDocumentsInPlace</key><true/>

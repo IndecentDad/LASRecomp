@@ -5,7 +5,9 @@
 // Metal renderer for the NVN layer: window, textures, command execution, presentation.
 #include <sys/stat.h>
 #include <TargetConditionals.h>
-#if !TARGET_OS_IPHONE
+#if TARGET_OS_IPHONE
+#import <UIKit/UIKit.h>  // the SDL Metal view is a UIView: its bounds are the window's real size (unlike SDL's)
+#else
 #import <AppKit/AppKit.h>  // NSProcessInfo only (the App Nap exemption in ui_run); everything else is Metal/SDL
 #endif
 #import <Metal/Metal.h>
@@ -24,6 +26,7 @@ static id<MTLDevice> dev;
 static id<MTLCommandQueue> queue;
 static CAMetalLayer *layer;
 static SDL_Window *window;
+static SDL_MetalView ios_metal_view;  // (iOS: the UIView SDL made for us: its bounds are the window's real size)
 static atomic_bool ui_ready;
 static id<MTLRenderPipelineState> present_pipe;
 static id<MTLSamplerState> present_sampler;
@@ -1152,20 +1155,70 @@ void ui_window_init(void) {
     if (getenv("LARECOMP_HIDDEN")) wflags |= SDL_WINDOW_HIDDEN;
     window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
+#ifdef SDL_PLATFORM_IOS
+    {   // SDL's UIKit backend sizes its window from UIScreen.bounds, which on a portrait-held iPad is the portrait
+        // size even when the scene is landscape: the window (and its view) then come up portrait and the 16:9 game
+        // is a band in the middle of it. Resize to the scene's own bounds (runtime/platform/ios_ui.m).
+        extern void plat_ios_scene_size(int *, int *);
+        int sw = 0, sh = 0;
+        plat_ios_scene_size(&sw, &sh);
+        if (sw > 0 && sh > 0 && (sw != win_w || sh != win_h)) {
+            SDL_SetWindowSize(window, sw, sh);
+            LOG("[ios] window resized to the scene: %dx%d pt (SDL made it %dx%d)\n", sw, sh, win_w, win_h);
+        }
+    }
+#endif
     rt_window_icon(window);
     // the Fullscreen setting applies from the start screen on (not only once the game runs); test windows stay windows
     if (g_settings.fullscreen && !getenv("LARECOMP_WINDOW") && !getenv("LARECOMP_HIDDEN")) SDL_SetWindowFullscreen(window, true);
     SDL_MetalView view = SDL_Metal_CreateView(window);
     layer = (__bridge CAMetalLayer *)SDL_Metal_GetLayer(view);
+    ios_metal_view = view;
     dev = MTLCreateSystemDefaultDevice();
     layer.device = dev;
     layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
     layer.framebufferOnly = getenv("LARECOMP_WINDOW_SHOT") ? NO : YES;
+    // (iPadOS asks the window scene for landscape + a landscape minimum size in main(), before this window exists:
+    // the restrictions only shape windows the system creates after they are set, runtime/platform/ios_ui.m)
 }
 
 SDL_Window *ui_window(void) { return window; }
 void *ui_metal_layer(void) { return (__bridge void *)layer; }
 void *ui_metal_device(void) { return (__bridge void *)dev; }
+
+// The drawable's pixel size. iPadOS: SDL reports the *screen's* size (in the physical orientation), which is not the
+// window's when the scene and the device disagree - a landscape window on a portrait-held iPad would render into a
+// portrait drawable and be fitted into the window as a rectangle in a corner. The view SDL created is what the
+// system presents, so its bounds x the screen scale is the right answer. Both loops (the start screen in
+// runtime/ui/launcher.mm and the game's ui_run below) ask for it here.
+void ui_drawable_size(SDL_Window *win, int *out_w, int *out_h) {
+#ifdef SDL_PLATFORM_IOS
+    UIView *v = (__bridge UIView *)ios_metal_view;
+    UIWindow *uwin = v ? v.window : nil;
+    if (v && uwin && uwin.bounds.size.width > 0 && uwin.bounds.size.height > 0) {
+        // SDL's UIKit backend predates iPadOS 26's windowed apps: it sizes the SDL view from UIScreen.bounds, which
+        // is always the *portrait* size, so inside a landscape window the view is a portrait rectangle parked at the
+        // window's origin - the game then shows as a box in the corner. Fit it to the window it is in.
+        CGRect want = uwin.bounds;
+        if (!CGRectEqualToRect(v.frame, want)) {
+            v.frame = want;
+            static int n;
+            if (n++ < 3) LOG("[ios] fitted the SDL view to its window: %.0fx%.0f pt\n", want.size.width, want.size.height);
+        }
+        CGFloat scale = uwin.screen.scale > 0 ? uwin.screen.scale : 2.0;
+        int sw = 0, sh = 0;
+        SDL_GetWindowSizeInPixels(win, &sw, &sh);
+        static int logged;
+        if (!logged++)
+            LOG("[ios] drawable %.0fx%.0f pt x%.1f = %.0fx%.0f px (SDL reported %dx%d px)\n", want.size.width,
+                want.size.height, scale, want.size.width * scale, want.size.height * scale, sw, sh);
+        *out_w = (int)(want.size.width * scale + 0.5);
+        *out_h = (int)(want.size.height * scale + 0.5);
+        return;
+    }
+#endif
+    SDL_GetWindowSizeInPixels(win, out_w, out_h);
+}
 
 int ui_run(void) {
 #ifndef SDL_PLATFORM_IOS
@@ -1191,7 +1244,7 @@ int ui_run(void) {
         }
         menu_apply_window_requests(window);
         int w, h;
-        SDL_GetWindowSizeInPixels(window, &w, &h);
+        ui_drawable_size(window, &w, &h);  // (iPadOS: the view's size, not SDL's screen-sized report)
         layer.drawableSize = CGSizeMake(w, h);
     }
 }
