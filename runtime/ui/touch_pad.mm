@@ -56,9 +56,11 @@ static float px(float frac, float size) { return frac * size * g_scale; }
 // A round button's centre in window fractions.
 static V2 face_pos(int ctl, float *r_out) {
     V2 c = {FACE_CX, FACE_CY};
+    // The Switch's own diamond - A right, B bottom, X top, Y left - which is what the game's prompts draw (the
+    // default bindings are positional: runtime/hle/bindings.c DEF_PAD binds Switch A to the controller's east button).
     switch (ctl) {
-    case CTL_A: c.y += FACE_D; break;
-    case CTL_B: c.x += FACE_D * 1.35f; break;
+    case CTL_A: c.x += FACE_D * 1.35f; break;
+    case CTL_B: c.y += FACE_D; break;
     case CTL_X: c.y -= FACE_D; break;
     case CTL_Y: c.x -= FACE_D * 1.35f; break;
     }
@@ -126,14 +128,16 @@ void touch_pad_init(void) {
     d.type = SDL_JOYSTICK_TYPE_GAMEPAD;
     d.naxes = SDL_GAMEPAD_AXIS_COUNT;
     d.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
-    d.axis_mask = (1u << SDL_GAMEPAD_AXIS_LEFTX) | (1u << SDL_GAMEPAD_AXIS_LEFTY) |
-                  (1u << SDL_GAMEPAD_AXIS_LEFT_TRIGGER) | (1u << SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
-    d.button_mask = (1u << SDL_GAMEPAD_BUTTON_SOUTH) | (1u << SDL_GAMEPAD_BUTTON_EAST) |
-                    (1u << SDL_GAMEPAD_BUTTON_WEST) | (1u << SDL_GAMEPAD_BUTTON_NORTH) |
-                    (1u << SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) | (1u << SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) |
-                    (1u << SDL_GAMEPAD_BUTTON_BACK) | (1u << SDL_GAMEPAD_BUTTON_START);
+    // Every button and axis, not just the ones the pad draws. SDL numbers a virtual joystick's buttons (and axes)
+    // *sequentially over the set mask bits* - the gamepad mapping it generates for them counts the bits up in
+    // SDL_GAMEPAD_BUTTON_* order - so any bit left out shifts every index after it and SDL_SetJoystickVirtualButton()
+    // quietly writes a button the gamepad mapping doesn't cover. With the full mask the joystick's indices *are* the
+    // SDL_GAMEPAD_* ones, which is what the code below passes. (A sparse mask is what kept L / R / ZL / ZR dead: the
+    // face buttons happen to line up either way, which is exactly why A worked.)
+    d.button_mask = 0x03FFFFFFu;  // (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1
+    d.axis_mask = 0x3Fu;          // (1u << SDL_GAMEPAD_AXIS_COUNT) - 1
     d.name = "Touch controls";
-    d.vendor_id = 0x0A5C;   // (not a real one: just so the prompts show something sensible)
+    d.vendor_id = 0x0A5C;   // (not a real one: SDL then calls it "Nintendo / other", whose prompts are the Switch's)
     d.product_id = 0x0001;
     g_id = SDL_AttachVirtualJoystick(&d);
     if (!g_id) {
@@ -227,7 +231,8 @@ static int hit(float x, float y) {
     float r;
     static const int faces[] = {CTL_A, CTL_B, CTL_X, CTL_Y, CTL_MINUS, CTL_PLUS, CTL_MENU};
     for (size_t i = 0; i < sizeof faces / sizeof *faces; i++) {
-        V2 c = faces[i] <= CTL_Y ? face_pos(faces[i], &r) : small_pos(faces[i], &r);
+        // (the enum puts the small buttons *before* the face buttons, so this is a range test, not a <= one)
+        V2 c = faces[i] >= CTL_A ? face_pos(faces[i], &r) : small_pos(faces[i], &r);
         float dx = (x - c.x), dy = (y - c.y) * 0.75f;  // (iPad screens are wider than tall: keep the hit area round)
         if (dx * dx + dy * dy <= (r * 1.35f) * (r * 1.35f)) return faces[i];
     }
@@ -246,8 +251,10 @@ static int hit(float x, float y) {
 
 static void button_for(int ctl, int *btn) {
     switch (ctl) {
-    case CTL_A: *btn = SDL_GAMEPAD_BUTTON_SOUTH; break;
-    case CTL_B: *btn = SDL_GAMEPAD_BUTTON_EAST; break;
+    // by position, matching runtime/hle/bindings.c DEF_PAD: Switch A is the east button, B the south one, X north
+    // (the Switch's own layout - see face_pos())
+    case CTL_A: *btn = SDL_GAMEPAD_BUTTON_EAST; break;
+    case CTL_B: *btn = SDL_GAMEPAD_BUTTON_SOUTH; break;
     case CTL_X: *btn = SDL_GAMEPAD_BUTTON_NORTH; break;
     case CTL_Y: *btn = SDL_GAMEPAD_BUTTON_WEST; break;
     case CTL_L: *btn = SDL_GAMEPAD_BUTTON_LEFT_SHOULDER; break;
@@ -335,22 +342,35 @@ bool touch_pad_event(const SDL_Event *e) {
 }
 
 // LARECOMP_TOUCH_TEST=<frame>:<A|B|X|Y|L|R|ZL|ZR|-|+|menu> (test, comma separated for more): presses that control
-// at that frame for a moment by feeding the same finger events a real touch would produce, so the whole chain
-// (finger -> virtual gamepad -> SDL gamepad events -> runtime/hle/input.c -> the game) can be exercised without a
-// finger on the glass. LARECOMP_TOUCH_TEST_STICK=<frame>:<x>,<y> does the same for the stick.
+// at that frame for LARECOMP_TOUCH_HOLD frames (default 30), by feeding the same finger events a real touch would
+// produce, so the whole chain (finger -> virtual gamepad -> SDL gamepad events -> runtime/hle/input.c -> the game) can
+// be exercised without a finger on the glass. Controls joined by & are held *together*, each on its own finger, the
+// way two thumbs would press them ("1500:L&R"); a later entry releases what came before it.
+// LARECOMP_TOUCH_TEST_STICK=<frame>:<x>,<y> does the same for the stick.
 void touch_pad_frame(uint64_t frame) {
     static const char *spec, *stick_spec;
     static int init;
+    static long hold = -1;
     static uint64_t release_at;
-    static SDL_FingerID g_test_finger = 9001;
-    if (!init) { init = 1; spec = getenv("LARECOMP_TOUCH_TEST"); stick_spec = getenv("LARECOMP_TOUCH_TEST_STICK"); }
+    static struct { int ctl; SDL_FingerID id; } down[8];
+    static int ndown;
+    if (!init) {
+        init = 1;
+        spec = getenv("LARECOMP_TOUCH_TEST");
+        stick_spec = getenv("LARECOMP_TOUCH_TEST_STICK");
+        const char *h = getenv("LARECOMP_TOUCH_HOLD");
+        hold = h ? atol(h) : 30;
+    }
     if (release_at && frame >= release_at) {
         // (delivered to the pad directly: SDL_PushEvent refuses synthetic finger events, which only come from the
         // platform's touch driver)
-        SDL_Event e = {0};
-        e.type = SDL_EVENT_FINGER_UP;
-        e.tfinger.fingerID = g_test_finger;
-        touch_pad_event(&e);
+        for (int i = 0; i < ndown; i++) {
+            SDL_Event e = {0};
+            e.type = SDL_EVENT_FINGER_UP;
+            e.tfinger.fingerID = down[i].id;
+            touch_pad_event(&e);
+        }
+        ndown = 0;
         release_at = 0;
     }
     for (const char *sp = stick_spec; sp && *sp;) {
@@ -370,21 +390,24 @@ void touch_pad_frame(uint64_t frame) {
     }
     if (!spec || !*spec) return;
     long at;
-    char what[32];
-    if (sscanf(spec, "%ld:%31[^,;]", &at, what) != 2 || (long)frame < at) return;
+    char what[64];
+    if (sscanf(spec, "%ld:%63[^,;]", &at, what) != 2 || (long)frame < at) return;
     spec = strchr(spec, ',');
     if (spec) spec++;
     else spec = "";
-    int ctl = ctl_from_name(what);
-    if (ctl == CTL_NONE) return;
-    V2 c = ctl_centre(ctl);
-    SDL_Event e = {0};
-    e.type = SDL_EVENT_FINGER_DOWN;
-    e.tfinger.fingerID = 9001;
-    e.tfinger.x = c.x;
-    e.tfinger.y = c.y;
-    touch_pad_event(&e);
-    release_at = frame + 30;  // (a tap: long enough for the game to see it, short enough not to stick)
+    for (char *tok = strtok(what, "&"); tok && ndown < 8; tok = strtok(NULL, "&")) {
+        int ctl = ctl_from_name(tok);
+        if (ctl == CTL_NONE) continue;
+        V2 c = ctl_centre(ctl);
+        SDL_FingerID id = (SDL_FingerID)(9001 + ndown);  // (one finger per control, as two thumbs would)
+        SDL_Event e = {0};
+        e.type = SDL_EVENT_FINGER_DOWN;
+        e.tfinger.fingerID = id;
+        e.tfinger.x = c.x;
+        e.tfinger.y = c.y;
+        if (touch_pad_event(&e)) { down[ndown].ctl = ctl; down[ndown].id = id; ndown++; }
+    }
+    if (ndown) release_at = frame + (uint64_t)hold;  // (a tap: long enough for the game to see it, not to stick)
 }
 
 // ------------------------------------------------------------------ drawing
