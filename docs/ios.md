@@ -71,11 +71,24 @@ black screen.
 **Install first, then copy the game files**: reinstalling the app recreates its data container, and anything in
 Documents goes with it.
 
+## Touch controls
+
+The iPad has no buttons, so the game gets an on-screen gamepad: the stick bottom-left, A / B / X / Y bottom-right,
+L / ZL and R / ZR along the top, `-` / `+` and the overlay-menu button (`=`) top centre. It is an SDL *virtual*
+gamepad (`SDL_AttachVirtualJoystick`), so to the rest of the game it is an ordinary controller: the Controls tab
+remaps it, the button prompts match it, and the menu navigates with it. Touches are tracked per finger, so the stick
+and a button can be held at once and sliding a finger off a button releases it; ZL / ZR are analog triggers, as on a
+real pad.
+
+The pad hides itself behind the overlay menu; in **Auto** it also hides while a real controller is connected, so a
+paired gamepad and the touch pad never fight. Off / On / Auto and the size live in the in-game menu, **Display** tab
+("Touch controls" section), and in `larecomp.ini` as `touch_controls` (0 / 1 / 2) and `touch_scale`.
+
+Built by `runtime/ui/touch_pad.mm`, drawn with ImGui into the renderer's foreground draw list and fed the SDL
+touch events ahead of the menu (`runtime/nvn/metal.m`).
+
 ## What is not there (yet)
 
-- **Touch controls.** The game expects a controller. A virtual gamepad is the planned next step: SDL's virtual
-  joystick (`SDL_AttachVirtualJoystick`) feeding the existing binding table, so remapping and button prompts keep
-  working unchanged. Today the on-screen UI is touch-tappable (SDL turns touches into pointer events for ImGui).
 - **In-app seed generation.** The generator is a Python program run as a second process, which iOS forbids. Generate
   a seed on a Mac (the desktop start screen, or `make rando-helper`) and copy its `rando/<seed>/` folder into the
   app's Documents folder; it then plays like any seed, and switching seeds reboots the game in place.
