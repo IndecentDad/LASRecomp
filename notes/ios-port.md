@@ -99,3 +99,40 @@ To check a pad mapping without a finger on the glass, `LARECOMP_TOUCH_TEST="<fra
 `LARECOMP_TOUCH_HOLD`) feeds the pad the events a real touch produces, and a temporary `LOG` in
 `runtime/hle/input.c`'s `SDL_EVENT_GAMEPAD_BUTTON_*` / `…_AXIS_MOTION` case prints which button / axis index the
 input layer actually saw.
+
+## The over-bright glow on iPad (open: a driver-level difference, not state)
+
+Symptom: in bright doorways Link's tunic and hands blow out to white and the window lights streak; it is iPad-only
+(macOS renders the same frame correctly). Measured at the same frame, same save, same inputs and the same render
+scale, the game's bloom pyramid is the whole story: the scene target and the first downsample level match between
+the platforms, then every deeper level comes out ~2.3x brighter on the iPad with its peaks intact where the Mac
+averages them (240-level mean 0.76 / peak 53 on macOS vs 1.66 / peak 255 on the iPad; 60-level 0.22 / 12 vs
+0.52 / 91). No cross-frame accumulation: one level tracked over 3000 frames is flat on both.
+
+Everything the bloom's draws *receive* is byte-identical, verified per draw on both platforms at that frame:
+
+| checked | result |
+|---|---|
+| fragment-shader fingerprints, draw order (178 draws, 21 shaders) | identical |
+| generated **MSL** of the downsample, upsample and composite shaders | byte-identical |
+| texture bindings: guest format, Metal format, size, mip count, view format (390 bindings) | identical (one target 341 vs 342 texels: my forced scale 1.4229 vs the iPad's 1.42292) |
+| samplers (guest descriptors), and with the sampler cache bypassed | identical |
+| fragment uniform buffers (all 110 lines) | byte-identical |
+| vertex uniform buffers | differ only where the game's own animation differs |
+| clear decisions: per-frame clears and the game's explicit clears, per target | identical |
+| blend/pipeline state (derived from identical guest state) | identical |
+
+Experiments that did **not** move it: BC support (both report it), render scale, 4:3 window/letterboxing, an -O0
+build, the scaled depth-copy path, the frame clear, snapshot reuse (`LARECOMP_NO_SNAPSHOT_REUSE`), and giving the
+bloom levels a filterable `RGBA16Float` format instead of `RG11B10Float`.
+
+The one experiment that *did* point somewhere: forcing point sampling of the RG11B10 targets on macOS reproduces the
+numbers almost exactly (17.8k vs 21.7k px above 200; peak 244 vs 250). But when the two bloom passes were rewritten
+on iOS to fetch bilinearly by hand - four unfiltered `texture2d::read`s with the bilinear weights, validated on the
+Mac where it reproduces the hardware's result (0 blown pixels, px>200 17892 both ways) - the iPad's output did not
+change at all. So the iPad is *already* computing what an explicit bilinear fetch computes, and the sampling is not
+the mechanism; the difference is downstream, in how the accumulated HDR values end up 2.3x higher on that GPU.
+
+Next candidates, none yet tested: a per-GPU difference in blending/storing into `RG11B10Float` (the levels are HDR
+and are built by read-modify-write passes), and the *vertex* shader pairing for the bloom quads (only the fragment
+MSL pairs were compared - heap addresses differ per run, so shaders have to be matched by content, not address).
