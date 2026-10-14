@@ -992,6 +992,12 @@ static id<MTLSamplerState> sampler_for(NvnSamplerDesc *d) {
     if (d->compare_mode) sd.compareFunction = getenv("LARECOMP_NO_SHADOW") ? MTLCompareFunctionAlways : compare_fn((uint8_t)d->compare_func);
     sd.supportArgumentBuffers = NO;
     id<MTLSamplerState> s = [dev newSamplerStateWithDescriptor:sd];
+    if (!s) {  // (no sampler at all: Metal would sample the texture with undefined filtering - worth saying out loud)
+        static int n;
+        if (n++ < 8) LOG("[sampler] creation failed: min %u mag %u mip %u lod %g..%g aniso %g wrap %u %u compare %d\n",
+                         sd.minFilter, sd.magFilter, sd.mipFilter, sd.lodMinClamp, sd.lodMaxClamp, sd.maxAnisotropy,
+                         sd.sAddressMode, sd.tAddressMode, (int)sd.compareFunction);
+    }
     d->backend = (void *)CFBridgingRetain(s);
     return s;
 }
