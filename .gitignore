@@ -17,3 +17,6 @@ tools/venv/
 venv/
 __pycache__/
 .DS_Store
+
+# the generated Xcode project (xcodegen: make ios-xcode)
+/ios/LASRecomp.xcodeproj/

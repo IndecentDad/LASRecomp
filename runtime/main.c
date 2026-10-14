@@ -4,6 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(SDL_PLATFORM_IOS)
+// iPadOS: SDL_main.h renames this file's main() to SDL_main and SDL's own entry point (UIApplicationMain through
+// runtime/main's SDL_shim) calls it from the app delegate, once the UIKit window/layer machinery exists. Without
+// this, main() would run before UIApplicationMain and SDL_CreateWindow would find no application.
+#include <SDL3/SDL_main.h>
+#endif
+
 #include "gamelib.h"
 #include "paths.h"
 #include "settings.h"
@@ -159,6 +166,28 @@ static void boot(const char *root) {
     kernel_run_main(t, t->handle, 0, init_fn, fini_fn);  // nn::init::Start(thread_handle, args_region, init, fini)
 }
 
+// --build-romfs <romfs-dir> <out.bin>: build the game's data image without the start screen (scripts, the
+// iOS/macOS setup pipeline: the launcher does the same in-process, runtime/ui/launcher.mm).
+static void romfs_progress(uint64_t done, uint64_t total) {
+    static uint64_t last;
+    if (total && (done == total || done - last >= (256ull << 20))) {
+        last = done;
+        fprintf(stderr, "[romfs] %llu/%llu MB (%.0f%%)\n", done >> 20, total >> 20, total ? 100.0 * (double)done / (double)total : 0.0);
+    }
+}
+
+static int build_romfs_cli(const char *dir, const char *out) {
+    extern bool romfs_build(const char *dir, const char *out, void (*progress)(uint64_t, uint64_t), char *why, size_t why_size);
+    char why[256] = "";
+    fprintf(stderr, "[romfs] building %s from %s\n", out, dir);
+    if (!romfs_build(dir, out, romfs_progress, why, sizeof why)) {
+        fprintf(stderr, "[romfs] FAILED: %s\n", why);
+        return 1;
+    }
+    fprintf(stderr, "[romfs] done\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     plat_init();
 #ifdef _WIN32
@@ -166,7 +195,15 @@ int main(int argc, char **argv) {
 #else
     setvbuf(stderr, NULL, _IOLBF, 0);
 #endif
+    for (int i = 1; i + 2 < argc; i++)  // (before rt_paths_init: it needs no data root)
+        if (!strcmp(argv[i], "--build-romfs")) return build_romfs_cli(argv[i + 1], argv[i + 2]);
+#if defined(SDL_PLATFORM_IOS)
+    // iPadOS keeps exefs/ and romfs.bin directly in the app's Documents folder (the data root): that is what the
+    // Files app and Finder show, so the player drops them straight in (no extracted/ level to get right).
+    const char *root = ".";
+#else
     const char *root = "extracted";  // (in the data root)
+#endif
     bool skip_launcher = getenv("LARECOMP_NO_LAUNCHER") || getenv("LARECOMP_INPUT");  // tests boot straight in
     static char arg_root[1024];
     for (int i = 1; i < argc; i++) {

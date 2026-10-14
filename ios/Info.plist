@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- iPadOS app for LAS Recomp. The game files are NOT in the bundle: they live in the app's Documents folder
+     (UIFileSharingEnabled + LSSupportsOpeningDocumentsInPlace let the user drop exefs/ + romfs.bin there with
+     Finder or the Files app, or import them from inside the app). See docs/ios.md. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key><string>com.konradkern.lasrecomp</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>LAS Recomp</string>
+    <key>CFBundleDisplayName</key><string>LAS Recomp</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.9.3</string>
+    <key>CFBundleVersion</key><string>0.9.3</string>
+    <key>CFBundleIconName</key><string>AppIcon</string>
+    <key>LSRequiresIPhoneOS</key><true/>
+    <key>MinimumOSVersion</key><string>17.0</string>
+    <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
+    <key>UILaunchScreen</key><dict/>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key><false/>
+        <key>UISceneConfigurations</key>
+        <dict>
+            <key>UIWindowSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneConfigurationName</key><string>SDLSceneConfiguration</string>
+                    <key>UISceneDelegateClassName</key><string>SDLUIKitSceneDelegate</string>
+                </dict>
+            </array>
+        </dict>
+    </dict>
+    <!-- the game is 16:9; landscape keeps its framing (the renderer copes with other shapes, but the UI is designed
+         for this one) -->
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <!-- the user brings their own game files: expose the app's Documents folder (Finder / Files) -->
+    <key>UIFileSharingEnabled</key><true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+    <!-- SDL: hardware keyboards/mice (iPad) and game controllers (Bluetooth / MFi) -->
+    <key>UIApplicationSupportsIndirectInputEvents</key><true/>
+    <key>GCSupportsControllerUserInteraction</key><true/>
+    <key>CADisableMinimumFrameDurationOnPhone</key><true/>
+    <key>ITSAppUsesNonExemptEncryption</key><false/>
+</dict>
+</plist>

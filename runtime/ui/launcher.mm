@@ -117,6 +117,9 @@ static pthread_mutex_t g_update_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void *update_thread(void *) {
     std::string body;
+#ifdef SDL_PLATFORM_IOS
+    return NULL;  // no curl, no second process on iOS: the update banner is a desktop feature
+#else
     if (const char *t = getenv("LARECOMP_UPDATE_TAGS")) {  // (test) "beta_2,v1.0.0": these releases, no network
         for (const char *p = t; *p;) {
             const char *c = strchr(p, ',');
@@ -158,6 +161,7 @@ static void *update_thread(void *) {
     g_update_tag = best;
     pthread_mutex_unlock(&g_update_lock);
     return NULL;
+#endif
 }
 
 // ------------------------------------------------------------------ game files
@@ -177,7 +181,17 @@ static std::string check_copied_files(const std::string &root) {
     size_t n = fread(id, 1, 8, f);
     fclose(f);
     if (n != 8 || memcmp(id, BUILD_ID, 8)) return "Wrong game version (needs v1.0.0)";
+#ifdef SDL_PLATFORM_IOS
+    // iPadOS: the game data is the prebuilt romfs.bin (made on a Mac by `lasrecomp --build-romfs` or the start
+    // screen) plus the movie files, which the video decoder opens by path rather than through the image
+    // (runtime/hle/movie.c): without them the opening movie - forced on a first run - is a black screen. The rest
+    // of the 5.8 GB romfs/ tree the image is built from is not needed on the device. The background of this screen
+    // wants romfs/region_common/movie/title.webm too, and is simply skipped when it is not there.
+    if (!file_exists(root + "/romfs.bin")) return "Game data missing (romfs.bin)";
+    if (!file_exists(root + "/romfs/region_common/movie/opening.webm")) return "Game data missing (the movies)";
+#else
     if (!file_exists(root + "/romfs/region_common") || !file_exists(root + "/romfs.bin")) return "Game data missing";
+#endif
     return "";
 }
 
@@ -281,6 +295,11 @@ static float extract_progress(void) {
 
 // Builds the game code from the copied files (a few minutes); false = failed (the job line says so)
 static bool build_game_code(void) {
+#ifdef SDL_PLATFORM_IOS
+    // iPadOS cannot build it: the generator is a Python program and the compiler is a second process, and the app
+    // ships the code linked in (make ios-game-lib -> build/ios/liblasgame_ios.a). Nothing to do here.
+    return true;
+#else
     int cores = SDL_GetNumLogicalCPUCores(), ram_gb = SDL_GetSystemRAM() / 1024;
     GameBuildOpts o = {build_progress, cores < ram_gb - 2 ? cores : ram_gb - 2 > 1 ? ram_gb - 2 : 1};
     char why[256] = "";
@@ -291,6 +310,7 @@ static bool build_game_code(void) {
         set_failure(FAIL_BUILD);
     }
     return ok;
+#endif
 }
 
 static void *extract_thread(void *) {
@@ -767,6 +787,9 @@ static void reveal_folder(const std::string &dir) {
 
 static SDL_Window *g_launcher_win;
 static bool g_files_deleted;  // set here: the start screen goes back to setting the game files up
+#ifdef SDL_PLATFORM_IOS
+static bool g_rescan;  // the Setup page's Rescan: re-check the Documents folder (no folder picker on iOS)
+#endif
 static void prelaunch_tab(float sc) {
     const ImVec4 gold(0.93f, 0.76f, 0.33f, 1);
     auto heading = [&](const char *t) {
@@ -958,6 +981,14 @@ extern "C" void launcher_run(const char *root) {
             status = check_game_files(g_root);
             if (!status.empty()) { g_bg = 0; bind_capture_cancel(); settings_save(); page = SETUP; }
         }
+#ifdef SDL_PLATFORM_IOS
+        if (g_rescan) {  // the Setup page's Rescan: the user copied the files in (Files app / Finder)
+            g_rescan = false;
+            status = check_game_files(g_root);
+            fprintf(stderr, "[launcher] rescan: %s\n", status.empty() ? "ready" : status.c_str());
+            if (status.empty()) { load_background(dev); page = MAIN; }
+        }
+#endif
         if (g_play_seed_req) {  // the Randomizer tab's Play: that seed, then PLAY as if pressed (first-launch questions)
             g_play_seed_req = false;
             seeds = list_seeds();
@@ -1018,6 +1049,9 @@ extern "C" void launcher_run(const char *root) {
 
             ImVec2 ds = io.DisplaySize;
             float s = ds.y / 720.0f;  // layout scale (fonts are built for ~2x)
+#ifdef SDL_PLATFORM_IOS
+            s *= 1.35f;  // an iPad has ~1.4x the points of a desktop window: the same UI would look tiny
+#endif
             ImGui::GetIO().FontGlobalScale = s * 0.5f;
             ImDrawList *bg = ImGui::GetBackgroundDrawList();
             if (g_bg) {  // cover the window, keep the aspect
@@ -1294,6 +1328,20 @@ extern "C" void launcher_run(const char *root) {
                 opt_begin("##files", sc);
                 if (!ready) {
                     opt_section("Your copy of the game");
+#ifdef SDL_PLATFORM_IOS
+                    // iPadOS: SDL has no UIKit folder dialog and the app cannot recompile the game (the code is
+                    // linked in). The player's files are copied into the app's own Documents folder, which the Files
+                    // app and Finder show because of UIFileSharingEnabled (ios/Info.plist).
+                    (void)src_v, (void)src_d, (void)ex_d;
+                    opt_action("Game files folder", "Files app / Finder",
+                               "Put your own version 1.0.0 files directly in LAS Recomp's Documents folder: exefs/ "
+                               "(main, main.npdm, sdk), romfs.bin (built on a Mac with `lasrecomp --build-romfs`) and "
+                               "romfs/region_common/movie/ (the opening, title and ending videos - the game's video "
+                               "decoder opens them by path). `make ios-files` copies all three. Then tap Rescan.", true);
+                    if (opt_button("Rescan", "Looks in LAS Recomp's Documents folder for extracted/exefs and "
+                                             "extracted/romfs.bin again."))
+                        g_rescan = true;
+#else
                     if (busy) opt_disable_next();
                     if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true))
                         SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
@@ -1309,6 +1357,7 @@ extern "C" void launcher_run(const char *root) {
                         pthread_create(&t, NULL, extract_thread, NULL);
                         pthread_detach(t);
                     }
+#endif
                     files_gb = -1;  // (re-measured after a setup)
                 } else {
                     // DELETE: frees LAS Recomp's copy (runtime/paths.c removes only what the setup made, only inside
@@ -1488,7 +1537,11 @@ extern "C" void launcher_run(const char *root) {
             [cb commit];
             if (shot) {
                 [cb waitUntilCompleted];
-                save_png(shot, getenv("LARECOMP_SHOT_PATH") ? getenv("LARECOMP_SHOT_PATH") : "build/launcher.png");
+                const char *sp = getenv("LARECOMP_SHOT_PATH") ? getenv("LARECOMP_SHOT_PATH") : "build/launcher.png";
+                std::string dir(sp);  // (the data root has no build/ folder: iPadOS starts with the bundle's)
+                size_t slash = dir.find_last_of('/');
+                if (slash != std::string::npos) { dir.resize(slash); mkdir(dir.c_str(), 0755); }
+                save_png(shot, sp);
                 exit(0);
             }
 #else

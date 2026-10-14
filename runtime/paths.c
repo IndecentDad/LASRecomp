@@ -88,6 +88,18 @@ void rt_paths_init(void) {
     char root[1024];
     const char *env = getenv("LARECOMP_DATA_ROOT");
     if (env && *env) snprintf(root, sizeof root, "%s", env);
+#if defined(SDL_PLATFORM_IOS)
+    // iPadOS: the app bundle is read-only and SDL starts us with the bundle's Resources as the working directory,
+    // so the dev/portable rule below must not fire on a bundled extracted/ folder. The data root is the app's own
+    // Documents folder (UIFileSharingEnabled + LSSupportsOpeningDocumentsInPlace in ios/Info.plist make it visible
+    // in Finder and the Files app, which is how the game files get there).
+    else {
+        const char *home = getenv("HOME");
+        // The whole data root is the app's Documents folder: with UIFileSharingEnabled the user drops their
+        // extracted game files straight into "LAS Recomp/extracted" in the Files app or Finder.
+        snprintf(root, sizeof root, "%s/Documents", home && *home ? home : "/tmp");
+    }
+#else
     else if (is_dir("extracted")) snprintf(root, sizeof root, "%s", g_start), g_dev = true;  // dev / portable: as before
     else {
 #ifdef _WIN32
@@ -102,6 +114,7 @@ void rt_paths_init(void) {
         snprintf(root, sizeof root, "%s/Library/Application Support/" RT_BUNDLE_ID, home && *home ? home : "/tmp");
 #endif
     }
+#endif
     mkdirs(root);
     char msg[1400];
     if (!is_dir(root) || !writable(root) || chdir(root) != 0) {
@@ -109,6 +122,9 @@ void rt_paths_init(void) {
         snprintf(msg, sizeof msg, "LAS Recomp can't write to its folder:\n%s\n\nIt keeps game files, saves and seeds "
                  "next to the program. Move the \"LAS Recomp\" folder somewhere you can write to (e.g. Documents or "
                  "Desktop, not Program Files) and start it again.", root);
+#elif defined(SDL_PLATFORM_IOS)
+        snprintf(msg, sizeof msg, "LAS Recomp can't write to its data folder:\n%s\n\nOn iPadOS it keeps everything "
+                 "in the app's Documents folder, which must be visible in the Files app.", root);
 #else
         snprintf(msg, sizeof msg, "LAS Recomp can't write to its data folder:\n%s", root);
 #endif

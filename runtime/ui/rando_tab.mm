@@ -782,8 +782,17 @@ extern "C" void rando_tab_draw(float scale) {
     opt_toggle("Spoiler log", &g_opts.spoiler, true, "Writes where every item is, to read from the seed's Spoiler log.");
 
     ImGui::Dummy(ImVec2(0, 8 * scale));
+#ifdef SDL_PLATFORM_IOS
+    // The generator is LAS-Randomizer, a Python program the helper runs in a second process: iOS apps cannot start
+    // other programs, so seeds are made on a Mac and copied in (rando/<seed>/ under the app's Documents folder).
+    opt_action("Generate seed", "on a Mac",
+               "Seeds are made by LAS-Randomizer, which runs on a Mac (LAS Recomp's start screen there, or "
+               "make rando-helper). iOS apps cannot start other programs. Copy the finished seed's rando/<seed>/ "
+               "folder into LAS Recomp's Documents folder here, then play it from Seeds.");
+#else
     if (opt_action("Generate seed", "", "Makes a seed with these options. It shows up under Seeds, ready to play."))
         start_generation();
+#endif
     if (!g_gen_status.empty() && !busy) {  // (e.g. a rename that failed)
         opt_disable_next();
         opt_action(g_gen_status.c_str(), "", g_gen_status.c_str(), false);

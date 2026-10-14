@@ -4,7 +4,10 @@
 #include "ui/menu.h"
 // Metal renderer for the NVN layer: window, textures, command execution, presentation.
 #include <sys/stat.h>
-#import <AppKit/AppKit.h>
+#include <TargetConditionals.h>
+#if !TARGET_OS_IPHONE
+#import <AppKit/AppKit.h>  // NSProcessInfo only (the App Nap exemption in ui_run); everything else is Metal/SDL
+#endif
 #import <Metal/Metal.h>
 #import <MetalFX/MetalFX.h>
 #include "output_scale.h"
@@ -586,12 +589,13 @@ void backend_init(void) {
     if (!g_guest_buffer) FATAL("cannot wrap guest heap in a Metal buffer (max %llu)\n", (uint64_t)dev.maxBufferLength);
     renderer_init(dev);
     if (getenv("LARECOMP_ASPECT_TEST")) {  // experiment: widen the game's 16:9 aspect constant
-        float *k = (float *)(uintptr_t)0x70016afba4ull;
+        float *k = (float *)(uintptr_t)(MAIN_BASE + 0x16afba4ull);
         mprotect((void *)((uintptr_t)k & ~0x3fffull), 0x4000, PROT_READ | PROT_WRITE);
         LOG("[aspect] constant %f -> %f\n", *k, (float)atof(getenv("LARECOMP_ASPECT_TEST")));
         *k = (float)atof(getenv("LARECOMP_ASPECT_TEST"));
     }
-    LOG("[metal] %s, heap buffer %llu MB\n", dev.name.UTF8String, (uint64_t)HEAP_MAX >> 20);
+    LOG("[metal] %s, heap buffer %llu MB (device maxBufferLength %llu MB, working set %llu MB)\n", dev.name.UTF8String,
+        (uint64_t)HEAP_MAX >> 20, (uint64_t)dev.maxBufferLength >> 20, (uint64_t)dev.recommendedMaxWorkingSetSize >> 20);
 }
 
 id<MTLCommandQueue> renderer_queue(void) { return queue; }
@@ -1164,13 +1168,16 @@ void *ui_metal_layer(void) { return (__bridge void *)layer; }
 void *ui_metal_device(void) { return (__bridge void *)dev; }
 
 int ui_run(void) {
+#ifndef SDL_PLATFORM_IOS
     // The emulated vsync/timer threads need precise sleeps; App Nap timer coalescing
     // otherwise stretches 16ms sleeps to ~100ms whenever the window isn't frontmost.
+    // (macOS only: iOS has no App Nap and no NSProcessInfo activity API, and a foreground app owns the screen.)
     static id activity;
     if (!activity)
         activity = [[NSProcessInfo processInfo]
             beginActivityWithOptions:NSActivityUserInitiated | NSActivityLatencyCritical
                               reason:@"Game emulation"];
+#endif
     ui_window_init();
     atomic_store(&ui_ready, true);
     for (;;) {

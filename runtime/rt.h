@@ -11,21 +11,30 @@
 #define FATAL(...) (fprintf(stderr, "FATAL: " __VA_ARGS__), rt_fatal_trace())
 
 // ---- address space layout (guest addresses == host addresses)
-// macOS reserves 0x2_0000_0000-0x70_0000_0000, and guest addresses must fit in 39 bits, so the
-// guest lives in a 12.5 GB window at 0x70_0000_0000 claimed at startup (see main.c).
-#define GUEST_LO     0x7000000000ull
-#define GUEST_HI     0x7320000000ull
-#define MAIN_BASE    0x7000000000ull
-#define SDK_BASE     0x7004000000ull
-#define HLE_BASE     0x7080000000ull   // fake addresses for host-implemented functions
+// The window is one 12.5 GB reservation claimed at startup (constructor(101), main.c) whose base is RT_BASE:
+//   - macOS/Windows/Linux: 0x70_0000_0000. macOS reserves everything below ~0x70_0000_0000 (0x2_0000_0000-0x70_...),
+//     and guest addresses must fit in 39 bits, so the mac build has always lived up here.
+//   - iPadOS: 0x4_0000_0000 (16 GB). iOS user VA ends at 0xFC0000000 (xnu osfmk/mach/arm/vm_param.h
+//     MACH_VM_MAX_ADDRESS_RAW, 67.6 GB; 140 TB only with the approval-gated Extended Virtual Addressing
+//     entitlement), so the macOS base cannot be mapped there at all. The iOS build compiles everything with
+//     -DRT_BASE=0x400000000 (Makefile IOS_BASE_MAIN) and generates its game code into generated-ios/ for the same
+//     base: it is baked into the recompiled code, so runtime and generated code must always agree.
+#ifndef RT_BASE
+#define RT_BASE      0x7000000000ull
+#endif
+#define GUEST_LO     (RT_BASE)
+#define GUEST_HI     (RT_BASE + 0x320000000ull)
+#define MAIN_BASE    (RT_BASE)
+#define SDK_BASE     (RT_BASE + 0x04000000ull)
+#define HLE_BASE     (RT_BASE + 0x80000000ull)   // fake addresses for host-implemented functions
 #define HLE_SIZE     0x0000100000ull
-#define TLS_BASE     0x7090000000ull
+#define TLS_BASE     (RT_BASE + 0x90000000ull)
 #define TLS_SIZE     0x0000100000ull
-#define HLE_HEAP     0x7092000000ull   // guest-visible memory owned by host code
+#define HLE_HEAP     (RT_BASE + 0x92000000ull)   // guest-visible memory owned by host code
 #define HLE_HEAP_SIZE 0x000E000000ull
-#define ALIAS_BASE   0x7100000000ull   // alias region (svcMapMemory targets)
+#define ALIAS_BASE   (RT_BASE + 0x100000000ull)  // alias region (svcMapMemory targets)
 #define ALIAS_SIZE   0x0100000000ull
-#define HEAP_BASE    0x7240000000ull
+#define HEAP_BASE    (RT_BASE + 0x240000000ull)
 #define HEAP_MAX     0x00D0000000ull   // 3.25 GB
 
 // ---- loader.c

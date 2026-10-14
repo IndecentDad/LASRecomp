@@ -7,11 +7,13 @@
 //  4. Arial
 // .bfttf is the console's obfuscated TTF: 8-byte header (magic, size) then every u32 XORed with a fixed key.
 // .ttc collections get face 0 copied out as a standalone font (the game's font engine wants one sfnt).
+#include <dirent.h>  // LARECOMP_LIST_FONTS: what fonts this system has
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
 #include "../hle.h"
+#include "../paths.h"  // rt_resource: the substitute font that ships inside the app
 
 typedef struct { uint64_t addr, size; } Font;
 static Font fonts[2];  // [0] Standard (every type), [1] NintendoExt when a dump provides it
@@ -110,8 +112,38 @@ static void load_fonts(void) {
     if (g_fonts_loaded) return;
     g_fonts_loaded = 1;
     const char *env = getenv("LARECOMP_FONT");
+    // LARECOMP_LIST_FONTS=1: print what fonts this system has (devices have no shell; this is how the iOS
+    // candidate list below was found).
+    if (getenv("LARECOMP_LIST_FONTS")) {
+        static const char *dirs[] = {"/System/Library/Fonts", "/System/Library/Fonts/Core",
+                                     "/System/Library/Fonts/LanguageSupport", "/System/Library/Fonts/AppFonts",
+                                     "/System/Library/Fonts/Supplemental", "fonts"};
+        for (size_t i = 0; i < sizeof dirs / sizeof *dirs; i++) {
+            DIR *d = opendir(dirs[i]);
+            if (!d) { LOG("[fonts] %s: none\n", dirs[i]); continue; }
+            struct dirent *e;
+            char line[4096] = "";
+            while ((e = readdir(d))) {
+                if (e->d_name[0] == '.') continue;
+                if (strlen(line) + strlen(e->d_name) < sizeof line - 2) { strcat(line, e->d_name); strcat(line, " "); }
+            }
+            closedir(d);
+            LOG("[fonts] %s: %s\n", dirs[i], line);
+        }
+    }
+    // The app's own font (SIL OFL, third_party/fonts/Baloo2) is the substitute that is always there - it ships
+    // inside the .app on macOS and inside the bundle on iPadOS, where none of the system paths below exist.
+    char bundled[1024];
+    if (!rt_resource("Baloo2-SemiBold.ttf", "third_party/fonts/Baloo2/Baloo2-SemiBold.ttf", bundled, sizeof bundled))
+        bundled[0] = 0;
     const char *std[] = {env, "fonts/nintendo_udsg-r_std_003.bfttf", "fonts/nintendo_udsg-r_std_003.ttf",
                          "fonts/nintendo_udsgr_std_003.ttf", "fonts/nintendo_udsgr_std_003.bfttf",
+                         // iPadOS: Hiragino Kaku Gothic is the Japanese system font, the same family the macOS
+                         // build falls back to (a .ttc collection: the game's engine handles those). "Fallback.ttf"
+                         // is the system's last-resort cascade font and is a plain TrueType file.
+                         "/System/Library/Fonts/Core/HiraginoKakuGothic.ttc",
+                         "/System/Library/Fonts/AppFonts/HiraginoMincho.ttc", "/System/Library/Fonts/Core/Fallback.ttf",
+                         bundled[0] ? bundled : NULL,  // the OFL font inside the app: Latin only, so it is a last resort
                          "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc", "C:/Windows/Fonts/YuGothR.ttc",
                          "C:/Windows/Fonts/YuGothM.ttc", "/System/Library/Fonts/Supplemental/Arial.ttf",
                          "C:/Windows/Fonts/arial.ttf",

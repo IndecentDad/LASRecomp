@@ -47,12 +47,17 @@ static int candidates(const char *game_dir, char out[3][1100]) {
 }
 
 bool gamelib_present(const char *game_dir) {
+#ifdef LARECOMP_STATIC_GAMELIB
+    (void)game_dir;
+    return true;  // the game code is linked into the app: always there
+#else
     if (g_tables) return true;
     char c[3][1100];
     int n = candidates(game_dir, c);
     for (int i = 0; i < n; i++)
         if (exists(c[i]) && id_matches(c[i])) return true;
     return false;
+#endif
 }
 
 static const GameLibTables *open_lib(const char *path) {
@@ -79,6 +84,22 @@ bool gamelib_load(const char *game_dir, char *why, size_t why_size) {
     if (!tried) {
         tried = true;
         snprintf(g_error, sizeof g_error, "the game code hasn't been built: set up the game files on the start screen");
+#ifdef LARECOMP_STATIC_GAMELIB
+        // iPadOS: the game code is linked into the app (there is no compiler to build it on the device and no
+        // dlopen of freshly built code). It is the same build as this runtime, so there is nothing to validate
+        // beyond the ABI; the id is logged for diagnostics only.
+        extern const GameLibTables *lasgame_tables(void);
+        const GameLibTables *t = lasgame_tables();
+        if (t && t->abi == GAMELIB_ABI) {
+            g_tables = t;
+            LOG("[gamelib] linked in: %llu + %llu functions (id %s, runtime %s)\n",
+                (unsigned long long)*t->main_count, (unsigned long long)*t->sdk_count, t->id ? t->id : "?",
+                GAMELIB_ID);
+        } else {
+            snprintf(g_error, sizeof g_error, "the linked game code has ABI %u, this runtime needs %u",
+                     t ? t->abi : 0u, (unsigned)GAMELIB_ABI);
+        }
+#else
         char c[3][1100];
         int n = candidates(game_dir, c);
         const char *env = getenv("LARECOMP_GAME_LIB");
@@ -93,6 +114,7 @@ bool gamelib_load(const char *game_dir, char *why, size_t why_size) {
             if (g_tables) LOG("[gamelib] %s (%llu + %llu functions)\n", c[i], (unsigned long long)*g_tables->main_count,
                               (unsigned long long)*g_tables->sdk_count);
         }
+#endif
     }
     if (!g_tables && why) snprintf(why, why_size, "%s", g_error);
     return g_tables != NULL;
