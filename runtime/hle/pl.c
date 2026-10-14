@@ -143,14 +143,17 @@ static void load_fonts(void) {
                          // is the system's last-resort cascade font and is a plain TrueType file.
                          "/System/Library/Fonts/Core/HiraginoKakuGothic.ttc",
                          "/System/Library/Fonts/AppFonts/HiraginoMincho.ttc", "/System/Library/Fonts/Core/Fallback.ttf",
-                         bundled[0] ? bundled : NULL,  // the OFL font inside the app: Latin only, so it is a last resort
                          "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc", "C:/Windows/Fonts/YuGothR.ttc",
                          "C:/Windows/Fonts/YuGothM.ttc", "/System/Library/Fonts/Supplemental/Arial.ttf",
                          "C:/Windows/Fonts/arial.ttf",
                          // Linux: DejaVu Sans (Debian / Ubuntu, Arch, Fedora). Not Noto Sans CJK: CFF outlines,
                          // which the game's font engine crashes on (it wants TrueType)
                          "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf",
-                         "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf"};
+                         "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+                         // last resort: the app's own OFL font. Latin only, and the game's font engine wants a full
+                         // CJK face (asking it for a glyph it does not have is what crashes it), so every system
+                         // font above wins.
+                         bundled[0] ? bundled : NULL};
     for (size_t i = 0; i < sizeof std / sizeof *std && !fonts[0].addr; i++)
         if (std[i]) load_one(std[i], &fonts[0]);
     if (!fonts[0].addr) FATAL("no usable system font substitute\n");

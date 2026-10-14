@@ -24,6 +24,8 @@ Settings g_settings = {
     .show_fps = false,
     .inv_keys = true,
     .tracker = true,
+    .touch_controls = 1,  // (an on-screen pad: useful exactly where it is drawn)
+    .touch_scale = 1.0f,
     .chaos_letters = CHAOS_LETTERS_MAP,
     .diff_damage = 1.0f,
     .upscaler = UPSCALE_SHARP,  // (MetalFX on macOS, AMD FSR 1 on Windows)
@@ -52,6 +54,11 @@ void settings_load(void) {
         else if (!strcmp(key, "reverb")) g_settings.reverb = atoi(val) != 0;
         else if (!strcmp(key, "movie_audio")) g_settings.movie_audio = atoi(val) != 0;
         else if (!strcmp(key, "show_fps")) g_settings.show_fps = atoi(val) != 0;
+        else if (!strcmp(key, "touch_controls"))  // 0 off, 1 on, 2 auto (the words are accepted too)
+            g_settings.touch_controls = !strcmp(val, "off") ? TOUCH_OFF :
+                                        !strcmp(val, "auto") ? TOUCH_AUTO :
+                                        !strcmp(val, "on") ? TOUCH_ON : (atoi(val) == 2 ? TOUCH_AUTO : atoi(val) ? TOUCH_ON : TOUCH_OFF);
+        else if (!strcmp(key, "touch_scale")) g_settings.touch_scale = (float)atof(val);
         else if (!strcmp(key, "resolution")) {
             int n = atoi(val);
             g_settings.res_mode = !strcmp(val, "dynamic") ? RES_DYNAMIC : (!strcmp(val, "75%") || !strcmp(val, "67%")) ? RES_Q75 :
@@ -102,6 +109,8 @@ void settings_save(void) {
     fprintf(f, "reverb = %d\n", g_settings.reverb);
     fprintf(f, "movie_audio = %d\n", g_settings.movie_audio);
     fprintf(f, "show_fps = %d\n", g_settings.show_fps);
+    fprintf(f, "touch_controls = %d\n", g_settings.touch_controls);  // 0 off, 1 on, 2 auto
+    fprintf(f, "touch_scale = %.2f\n", g_settings.touch_scale);
     fprintf(f, "upscaler = %s\n", g_settings.upscaler == UPSCALE_METALFX ? "metalfx" : g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
     fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
     if (g_settings.res_mode == RES_DYNAMIC) fprintf(f, "resolution = dynamic\n");

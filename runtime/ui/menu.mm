@@ -4,6 +4,7 @@
 // render thread inside backend_present, after the game image, into the same drawable.
 #ifdef __APPLE__
 #import <Metal/Metal.h>
+#include <TargetConditionals.h>
 #endif
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -26,6 +27,7 @@ extern "C" {
 #include "../hle.h"
 #include "../settings.h"
 #include "menu.h"
+#include "touch_pad.h"
 void input_reset(void);
 void save_editor_draw(float scale);  // save_editor.mm
 extern "C" int game_in_play(void);  // hle/warp.c
@@ -447,6 +449,22 @@ static void tab_display(void) {
         g_want_fullscreen_apply.store(true);
     }
     opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
+#if TARGET_OS_IPHONE
+    opt_section("Touch controls");
+    {
+        static const char *tc[] = {"Off", "On", "Auto"};
+        if (opt_choice("On-screen controls", &g_settings.touch_controls, tc, 3, TOUCH_ON,
+                       "An on-screen gamepad for the touch screen: the stick on the left, the face buttons on the "
+                       "right, L / ZL / R / ZR along the top. Off hides it; Auto hides it while a real controller is "
+                       "connected. The pad is a controller to the rest of the game, so the Controls tab remaps it and "
+                       "the button prompts match it.", false))
+            settings_save();
+        if (g_settings.touch_controls != TOUCH_OFF &&
+            opt_slider("Control size", &g_settings.touch_scale, 0.6f, 1.6f, 0.05f, 1.0f, "%.2fx",
+                       "How large the on-screen controls are drawn."))
+            settings_save();
+    }
+#endif
 
     opt_section("Rendering");
     // display order -> RES_* (the ini / enum order predates the menu order)
@@ -806,7 +824,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     bool trk = !open && tracker_overlay_wanted();
     bool chaos = !open && chaos_overlay_wanted();
     bool kbd = g_kbd.load() == 1;
-    if (!open && !kbd && !g_settings.show_fps && !inv && !trk && !chaos) {
+    if (!open && !kbd && !g_settings.show_fps && !inv && !trk && !chaos && !touch_pad_wanted(false, true)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         return;
     }
@@ -912,6 +930,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     }
 
     if (kbd) keyboard_draw(io, scale);
+    touch_pad_draw((float)tw, (float)th, open, true);  // on-screen controls: under the overlay, over the game
     ImGui::Render();
     g_text_busy = open && ui_text_busy();
 #ifdef __APPLE__

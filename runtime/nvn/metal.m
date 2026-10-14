@@ -2,6 +2,7 @@
 #include "paths.h"
 #include "settings.h"
 #include "ui/menu.h"
+#include "ui/touch_pad.h"
 // Metal renderer for the NVN layer: window, textures, command execution, presentation.
 #include <sys/stat.h>
 #include <TargetConditionals.h>
@@ -1094,6 +1095,8 @@ void backend_present(NvnTexture *t) {
     fnprof_frame(total_frames);
     extern void warp_frame(uint64_t frame);
     warp_frame(total_frames);
+    extern void touch_pad_frame(uint64_t frame);
+    touch_pad_frame(total_frames);  // (test hook: LARECOMP_TOUCH_TEST)
     extern void reboot_test_frame(uint64_t frame);  // runtime/main.c (LARECOMP_REBOOT_AT)
     reboot_test_frame(total_frames);
     extern void save_editor_frame(uint64_t frame);
@@ -1148,6 +1151,7 @@ void ui_window_init(void) {
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     settings_load();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) FATAL("SDL_Init: %s\n", SDL_GetError());
+    touch_pad_init();  // the on-screen pad is one more gamepad (runtime/ui/touch_pad.mm)
     int win_w = 1280, win_h = 720;
     if (getenv("LARECOMP_WINDOW")) sscanf(getenv("LARECOMP_WINDOW"), "%dx%d", &win_w, &win_h);
     // LARECOMP_HIDDEN=1: never shown (automated test runs render off screen without taking the user's focus)
@@ -1239,6 +1243,7 @@ int ui_run(void) {
         while (SDL_WaitEventTimeout(&e, 16)) {
             if (e.type == SDL_EVENT_QUIT) { LOG("window closed\n"); exit(0); }
             if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing
+            if (touch_pad_event(&e)) continue;     // a finger on the on-screen pad: the pad owns this touch
             if (menu_handle_event(&e)) continue;
             input_handle_event(&e);
         }
