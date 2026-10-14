@@ -339,6 +339,24 @@ const char *romfs_file_at(uint64_t off) {
 
 void romfs_file_read_hook(const char *path);
 
+// A file of the game's own romfs, read out of the image: runtime/nvn/texpatch.c identifies a texture by comparing its
+// bytes with the file it came from, and on iOS there is no loose romfs folder to read those files from (the player has
+// romfs.bin, plus the movies). NULL: the image isn't indexed yet (the game has not opened its romfs, so no texture
+// exists either) or the file isn't in it.
+uint8_t *rt_romfs_file(const char *rel, size_t *len) {
+    if (romfs_fd < 0 || rom_nfiles <= 0) return NULL;
+    for (int i = 0; i < rom_nfiles; i++) {
+        if (strcmp(rom_files[i].path, rel)) continue;
+        uint64_t size = rom_files[i].size;
+        uint8_t *d = malloc(size ? (size_t)size : 1);
+        if (!d) return NULL;
+        if (romfs_read(romfs_fd, d, size, rom_files[i].off) != (ssize_t)size) { free(d); return NULL; }
+        if (len) *len = (size_t)size;
+        return d;
+    }
+    return NULL;
+}
+
 // ------------------------------------------------------------------ IStorage (raw RomFS image)
 typedef struct { int fd; uint64_t size; } Storage;
 

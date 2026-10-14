@@ -67,10 +67,14 @@ static uint8_t *read_file(const char *p, size_t *len) {
     return d;
 }
 
+uint8_t *rt_romfs_file(const char *rel, size_t *len);  // runtime/services/fs.c: out of romfs.bin
+
 static uint8_t *read_all(const char *rel, size_t *len) {  // (the game's own files, never a seed's)
     char p[1200];
     snprintf(p, sizeof p, "%s/%s", g_romfs_dir ? g_romfs_dir : "extracted/romfs", rel);
-    return read_file(p, len);
+    uint8_t *d = read_file(p, len);
+    // iPadOS: the player has romfs.bin, not the loose tree the desktop build keeps next to the program
+    return d ? d : rt_romfs_file(rel, len);
 }
 
 static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
@@ -233,8 +237,21 @@ static TexLayout g_tunic_layout;  // (the game's tunic texture: its levels' plac
 static bool g_tunic_layout_ok;
 bool texpatch_is_item_cursor(int id) { return id >= 0 && id < g_nrefs && g_refs[id].role == R_ITEM_CURSOR; }
 
+// The reference list, once. Retried while it comes out empty: reading the files out of romfs.bin (read_all above)
+// needs the game to have opened its romfs, and an install without it (a fresh iPadOS one before the first PLAY) has
+// nothing to identify from - the next texture uploads try again.
+static void ensure_refs(void) {
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    static bool done;
+    if (done) return;
+    pthread_mutex_lock(&lock);
+    if (!done) { pthread_once(&g_once, load_refs); done = g_nrefs > 0; }
+    pthread_mutex_unlock(&lock);
+}
+
 int texpatch_identify(const NvnTexture *t) {
-    pthread_once(&g_once, load_refs);
+    ensure_refs();
+    if (!g_nrefs) return -1;
     if (!t->addr || t->depth > 1) return -1;
     uint64_t total = tegra_total_size(&t->layout);
     for (int i = 0; i < g_nrefs; i++) {
