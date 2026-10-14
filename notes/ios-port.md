@@ -80,3 +80,22 @@ full-width and centred (with the ~12% letterbox a 16:9 film has on the iPad's 4:
 | `MTLPixelFormatDepth24Unorm_Stencil8` | macOS-only; guarded out in `runtime/nvn/renderer.m` |
 
 No JIT or executable memory is involved anywhere (`PLAT_PROT_*` has no EXEC), so no JIT entitlement is needed.
+
+## The on-screen pad's virtual gamepad indices (a trap worth remembering)
+
+`SDL_SetJoystickVirtualButton()` / `…VirtualAxis()` take a **joystick** index, while the joystick's index space is
+built from `SDL_VirtualJoystickDesc.button_mask` / `axis_mask` by counting the set bits up in `SDL_GAMEPAD_BUTTON_*`
+/ `SDL_GAMEPAD_AXIS_*` order (`SDL_virtualjoystick.c`, the mapping generator). A sparse mask therefore *shifts* every
+index after the first gap, and a wrong index is not an error: `SDL_SetJoystickVirtualButton()` only rejects indices
+past `nbuttons`, so the press lands on a button the generated mapping does not cover and silently does nothing
+downstream.
+
+That is what made the pad's L / R / ZL / ZR (and `+`) dead while A / B / X / Y worked: the mask listed eight buttons,
+so L (gamepad 9) and R (gamepad 10) wrote joystick buttons 9 and 10, and the triggers wrote axes 4 and 5 of a
+four-axis mapping. `runtime/ui/touch_pad.mm` now sets *every* button and axis bit, which makes the joystick's index
+space the `SDL_GAMEPAD_*` enumeration the rest of the file already speaks.
+
+To check a pad mapping without a finger on the glass, `LARECOMP_TOUCH_TEST="<frame>:<ctl>[&<ctl>]…"` (with
+`LARECOMP_TOUCH_HOLD`) feeds the pad the events a real touch produces, and a temporary `LOG` in
+`runtime/hle/input.c`'s `SDL_EVENT_GAMEPAD_BUTTON_*` / `…_AXIS_MOTION` case prints which button / axis index the
+input layer actually saw.

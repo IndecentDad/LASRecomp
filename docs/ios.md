@@ -73,12 +73,13 @@ Documents goes with it.
 
 ## Touch controls
 
-The iPad has no buttons, so the game gets an on-screen gamepad: the stick bottom-left, A / B / X / Y bottom-right,
-L / ZL and R / ZR along the top, `-` / `+` and the overlay-menu button (`=`) top centre. It is an SDL *virtual*
-gamepad (`SDL_AttachVirtualJoystick`), so to the rest of the game it is an ordinary controller: the Controls tab
-remaps it, the button prompts match it, and the menu navigates with it. Touches are tracked per finger, so the stick
-and a button can be held at once and sliding a finger off a button releases it; ZL / ZR are analog triggers, as on a
-real pad.
+The iPad has no buttons, so the game gets an on-screen gamepad: the stick bottom-left, the face buttons bottom-right
+in the Switch's own diamond (A right, B bottom, X top, Y left - the layout the game's prompts draw), L / ZL and R / ZR
+along the top, `-` / `+` and the overlay-menu button (`=`) top centre. It is an SDL *virtual* gamepad
+(`SDL_AttachVirtualJoystick`), so to the rest of the game it is an ordinary controller: the Controls tab remaps it,
+the button prompts match it, and the menu navigates with it. Touches are tracked per finger, so the stick and a button
+can be held at once (including both shoulders, which the title screen's "Press L + R" needs) and sliding a finger off
+a button releases it; ZL / ZR are analog triggers, as on a real pad.
 
 The pad hides itself behind the overlay menu; in **Auto** it also hides while a real controller is connected, so a
 paired gamepad and the touch pad never fight. Off / On / Auto and the size live in the in-game menu, **Display** tab
