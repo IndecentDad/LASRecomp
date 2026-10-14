@@ -13,6 +13,13 @@
 #import <UIKit/UIKit.h>
 #include <stdio.h>
 
+// The player is watching a game, not reading a menu: keep the screen from dimming and locking while it runs (iPadOS
+// otherwise sleeps after a couple of minutes without touches - which also stops a scripted/automated run dead, since
+// a backgrounded app may not submit GPU work at all). Called from the window setup, on the main thread.
+void plat_ios_keep_awake(void) {
+    [UIApplication sharedApplication].idleTimerDisabled = YES;
+}
+
 void plat_ios_lock_landscape(void) {
     UIApplication *app = [UIApplication sharedApplication];
     if (!app) return;
