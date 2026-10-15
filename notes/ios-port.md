@@ -315,3 +315,23 @@ Compute-stage fast math is ruled out too: `LARECOMP_IEEE_COMPUTE` (MTLCompileOpt
 17919 white pixels against 16969 without it and 3651 on macOS. So the light table's compute-stage
 contraction/denormals are not the difference either. The player confirms the white bloom is still
 there in the current build, i.e. none of the shipped changes touch the visible bug.
+
+## The likely residual mechanism (from the player's two observations)
+
+With every MUFU guard off the tunic is a *shapeless* glowing circle; with them on it is white
+*with a visible shape* (player-confirmed, both on the iPad). That splits the bug in two:
+
+- the **NaN** (a guard off means `log2`/`sqrt`/`rsqrt` of an out-of-domain argument) -> NaN in the
+  HDR target -> the bloom smears it into a shapeless blob, so the *shape* comes from removing the NaN;
+- a **finite over-bright value** that survives the guards and is what remains.
+
+The guards' floor explains the second one: `rsqrt(fmax(x, 1e-30))` is **1e15** when the argument is
+<= 0, i.e. finite but astronomically large - exactly "white with a visible shape" - where the Mac,
+whose argument comes out a small positive, gets a modest value and shades correctly. So the argument
+of at least one of these ops is on the other side of zero on the M2 than on the M3 Pro.
+
+Bounding the guard does not fix that (any bound loose enough to keep legitimate cases still blows
+out; any bound tight enough to fix it breaks them), so the argument itself has to be found: probe
+the register that feeds each `rsqrt`/`log2`/`sqrt` - the pre-guard value - with
+`LARECOMP_DBG_SCALE` large enough to see small numbers (and note that a *negative* probed value is
+invisible in the unsigned HDR dump, which is why the probe needs an offset mode to show the sign).
