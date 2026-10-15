@@ -287,3 +287,25 @@ decided a ULP either side of its threshold - which is consistent with every arit
 failed, with the probe showing saturated-but-equal reciprocals, and with the diff map's patchy,
 screen-space pattern. `LARECOMP_NO_MUFU_LOG2/_SQRT/_RSQRT` are in the tree to lift the clamp one
 op at a time if that line is revisited.
+
+## First matched-state probe pair (both platforms, frame 12000, MarinTarinHouse)
+
+Recipe that works on both: the original `LARECOMP_INPUT`, `LARECOMP_LAUNCHER_AUTOPLAY=1`,
+`LARECOMP_WARP_ON_LOAD=MarinTarinHouse:MarinTarinHouse_01A`, `LARECOMP_DEBUG_FRAME=12000`,
+`LARECOMP_DBG_FS_HASH=<fp>:<pc>:<reg>` (the wide repeated-`A` script runs smoothly on macOS but
+keeps it at `level -`, so it never enters the game).
+
+`pc bd0 reg 6` with `LARECOMP_DBG_SCALE=1000`: **both** platforms show `lit-grey = 0` over Link,
+i.e. his fragments skip that branch on both - no control-flow divergence at that pc. The probe
+and the comparison are therefore validated on a matched pair, and the path hypothesis is not
+confirmed there.
+
+What the pair does show is that the *scene* still differs at a matched frame and level: Link's
+crop has mean 33.5 and 8685 black pixels on macOS against 16.9 and 10410 on the iPad. So the
+room's lighting differs beyond any animation-phase effect, in the same patchy, screen-space way
+the diff map showed - which points at the banked, screen-space light table the game builds into
+guest memory (the fragment shader reads it as `cbr(cb10, r35 + n)` at a dynamic offset, and the
+`[dispatch]` lines list `gmem`, so a compute shader writes it). `LARECOMP_PRECISE_MATH` already
+covers the compute stage and did not fix the scene white, so the remaining untested lever there
+is the compute library's own fast-math setting (`MTLCompileOptions.fastMathEnabled = NO` for
+compute, which affects contraction and denormals rather than which instruction is used).
