@@ -261,3 +261,29 @@ zero equal-channel lit pixels in his crop - and `LARECOMP_DBG_SCALE=1000` change
 the iPad's fragments skip; whether the Mac's fragments take it is the test that would confirm or
 kill the control-flow explanation. (macOS probe runs need retries: of five attempts, three
 stalled in the title sequence and one closed its window.)
+
+## What the player saw on the iPad (user-reported, 2 builds)
+
+| build | Link's clothes | bloom | rest of scene |
+|---|---|---|---|
+| with the BC1 CPU decode installed | **black** | gone | (reported) normal |
+| the current one (MUFU domain clamp, no BC1 decode) | **white** | present | normal |
+
+Two conclusions follow, and they rule out the tempting story that the MUFU clamp fixed anything:
+
+1. The clamp is *not* the fix: with it active the tunic is still blown out white and the bloom is
+   still there. (The "white -> black" seen earlier was the BC1 decode breaking his albedo - that
+   build's readback was shifted and mostly black, and with no white pixels left there was nothing
+   for the bloom to spread - which is also a direct demonstration that his clothes' colour is
+   driven by that albedo texture.)
+2. His albedo is therefore *not* what is wrong on the real build: the texture readback is
+   byte-identical between the platforms and the shader's own sampled albedo, probed at `pc 208`,
+   is dark on the iPad (max 147, no white). So what blows out is the lighting/visibility factor
+   applied to it.
+
+That leaves a control-flow difference in the branchy translated state machine as the leading
+mechanism - a loop bound (the shader walks a banked light table at a dynamic offset) or a branch
+decided a ULP either side of its threshold - which is consistent with every arithmetic fix having
+failed, with the probe showing saturated-but-equal reciprocals, and with the diff map's patchy,
+screen-space pattern. `LARECOMP_NO_MUFU_LOG2/_SQRT/_RSQRT` are in the tree to lift the clamp one
+op at a time if that line is revisited.
