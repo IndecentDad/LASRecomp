@@ -968,14 +968,27 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         // bloom then spreads across the screen. That is how Link's tunic and hands blew out white on an M2 iPad
         // and not on an M3 Mac (the game computes pow(1 - c, e) speculars; when c rounds just above 1, 1 - c is a
         // tiny negative, which is meant to mean "no specular at all", i.e. 0). Keep the argument in domain:
+        // LARECOMP_NO_MUFU_LOG2 / _SQRT / _RSQRT: emit that one op without its domain clamp. Out-of-domain MUFU
+        // behaviour is where the M2 and M3 Pro part ways, and the clamp turns "NaN -> saturated white" into
+        // "~0 -> black", so switching one op at a time names the op that decides Link's tunic.
+        static const char *noguard;
+        if (!noguard) {
+            noguard = "";
+            char *env;
+            env = getenv("LARECOMP_NO_MUFU_LOG2"); if (env && *env) noguard = "3";
+            env = getenv("LARECOMP_NO_MUFU_SQRT"); if (env && *env) noguard = "8";
+            env = getenv("LARECOMP_NO_MUFU_RSQRT"); if (env && *env) noguard = "5";
+        }
+        const char *g = (noguard[0] == (char)('0' + fn) || !noguard[0]) ? "%s" : (fn == 8 ? "fmax(%s, 0.0f)" : "fmax(%s, 1e-30f)");
+        char arg[128];
         switch (fn) {
         case 0: sprintf(t, "%scos(%s)", mufu_p, x); break;
         case 1: sprintf(t, "%ssin(%s)", mufu_p, x); break;
         case 2: sprintf(t, "%sexp2(%s)", mufu_p, x); break;
-        case 3: sprintf(t, "%slog2(fmax(%s, 1e-30f))", mufu_p, x); break;   // log2(<0) = NaN; log2(0) = -inf, and -inf * 0 = NaN
+        case 3: snprintf(arg, sizeof arg, g, x); sprintf(t, "%slog2(%s)", mufu_p, arg); break;
         case 4: sprintf(t, "(1.0f / %s)", x); break;
-        case 5: sprintf(t, "%srsqrt(fmax(%s, 1e-30f))", mufu_p, x); break;  // rsqrt(0) = +inf
-        case 8: sprintf(t, "%ssqrt(fmax(%s, 0.0f))", mufu_p, x); break;     // sqrt(<0) = NaN
+        case 5: snprintf(arg, sizeof arg, g, x); sprintf(t, "%srsqrt(%s)", mufu_p, arg); break;
+        case 8: snprintf(arg, sizeof arg, g, x); sprintf(t, "%ssqrt(%s)", mufu_p, arg); break;
         default: fail(c, "mufu %d", fn); return;
         }
         set_reg(c, d, FRES(t, bits(w, 50, 1)));
