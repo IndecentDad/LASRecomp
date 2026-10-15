@@ -979,7 +979,10 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
             env = getenv("LARECOMP_NO_MUFU_SQRT"); if (env && *env) noguard = "8";
             env = getenv("LARECOMP_NO_MUFU_RSQRT"); if (env && *env) noguard = "5";
         }
-        const char *g = (noguard[0] == (char)('0' + fn) || !noguard[0]) ? "%s" : (fn == 8 ? "fmax(%s, 0.0f)" : "fmax(%s, 1e-30f)");
+        // Default is the *guarded* form; the env vars above opt one op out. (The first cut of this tested
+        // "|| !noguard[0]" too, which read as "no env set -> unguarded" and silently reverted every guard,
+        // putting the NaN back and with it the shapeless white bloom.)
+        const char *g = (noguard[0] && noguard[0] == (char)('0' + fn)) ? "%s" : (fn == 8 ? "fmax(%s, 0.0f)" : "fmax(%s, 1e-30f)");
         char arg[128];
         switch (fn) {
         case 0: sprintf(t, "%scos(%s)", mufu_p, x); break;
