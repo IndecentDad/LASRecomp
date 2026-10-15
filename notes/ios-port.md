@@ -100,39 +100,56 @@ To check a pad mapping without a finger on the glass, `LARECOMP_TOUCH_TEST="<fra
 `runtime/hle/input.c`'s `SDL_EVENT_GAMEPAD_BUTTON_*` / `…_AXIS_MOTION` case prints which button / axis index the
 input layer actually saw.
 
-## The over-bright glow on iPad (open: a driver-level difference, not state)
+## The over-bright glow on iPad (open: one draw's shading parts ways on the M2)
 
-Symptom: in bright doorways Link's tunic and hands blow out to white and the window lights streak; it is iPad-only
-(macOS renders the same frame correctly). Measured at the same frame, same save, same inputs and the same render
-scale, the game's bloom pyramid is the whole story: the scene target and the first downsample level match between
-the platforms, then every deeper level comes out ~2.3x brighter on the iPad with its peaks intact where the Mac
-averages them (240-level mean 0.76 / peak 53 on macOS vs 1.66 / peak 255 on the iPad; 60-level 0.22 / 12 vs
-0.52 / 91). No cross-frame accumulation: one level tracked over 3000 frames is flat on both.
+Symptom: in bright doorways Link's tunic and hands blow out to white and the window lights streak; it is
+iPad-only (macOS renders the same frame correctly). The iPad here is Apple M2, the Mac an M3 Pro: two
+GPU generations of the same family, and the shader with the blow-out is Link's body fragment shader
+(fingerprint `6804ba6e5340c6f9`).
 
-Everything the bloom's draws *receive* is byte-identical, verified per draw on both platforms at that frame:
+The investigation moved from "the frame looks different" to "this one draw's output differs" with the
+runtime's debug frame (`LARECOMP_DEBUG_FRAME=<n>` dumps every render pass to `build/pass_NNN.png`, every
+fragment texture bound to `build/dtex_NNN_i.png`, plus the draw log). Dumping the same frame on both
+platforms lines the pass numbering up exactly, and the difference is local: Link's tunic and hands are
+pure white (255,255,255) where macOS is dark (mean 4,13,3), the lit objects and the floor's window light
+are somewhat darker, and the rest of the frame is identical to the last bit. Bloom then spreads the
+blown-out pixels (`5bcc5bba74542b30` and friends), which is the "glow" that was measured first.
+
+Everything the draw receives was then compared per platform, at the same frame, same warp and same
+inputs (`tools/cmp_passes.py`, `tools/cmp_draw_inputs.py`):
 
 | checked | result |
 |---|---|
-| fragment-shader fingerprints, draw order (178 draws, 21 shaders) | identical |
-| generated **MSL** of the downsample, upsample and composite shaders | byte-identical |
-| texture bindings: guest format, Metal format, size, mip count, view format (390 bindings) | identical (one target 341 vs 342 texels: my forced scale 1.4229 vs the iPad's 1.42292) |
-| samplers (guest descriptors), and with the sampler cache bypassed | identical |
-| fragment uniform buffers (all 110 lines) | byte-identical |
-| vertex uniform buffers | differ only where the game's own animation differs |
-| clear decisions: per-frame clears and the game's explicit clears, per target | identical |
-| blend/pipeline state (derived from identical guest state) | identical |
+| pass sequence and sizes (27 passes) | identical, pass by pass |
+| draw order, shader fingerprints, counts, render target, viewport, attributes, vertex streams | identical |
+| generated **MSL** of Link's fragment shader | byte-identical (dumped from the device, diffed) |
+| fragment uniform buffers (f0..f17) | byte-identical except 6 floats in f1 that the shader never reads |
+| the draw's textures (1024x1024 BC1 albedo, two 512x512 BC4 masks) | byte-identical |
+| vertex uniform buffers | differ only in the camera matrix (~0.15 deg) and one scalar |
+| vertex storage buffer | identical contents; only the guest's declared range size differed between runs |
 
-Experiments that did **not** move it: BC support (both report it), render scale, 4:3 window/letterboxing, an -O0
-build, the scaled depth-copy path, the frame clear, snapshot reuse (`LARECOMP_NO_SNAPSHOT_REUSE`), and giving the
-bloom levels a filterable `RGBA16Float` format instead of `RG11B10Float`.
+So the state is the same to within a fraction of an animation frame (the camera is still interpolating
+when the room loads), and the code, the uniforms and the texels are the same - the two GPUs simply
+evaluate that shader differently. The candidates that were tested and are *not* the mechanism:
 
-The one experiment that *did* point somewhere: forcing point sampling of the RG11B10 targets on macOS reproduces the
-numbers almost exactly (17.8k vs 21.7k px above 200; peak 244 vs 250). But when the two bloom passes were rewritten
-on iOS to fetch bilinearly by hand - four unfiltered `texture2d::read`s with the bilinear weights, validated on the
-Mac where it reproduces the hardware's result (0 blown pixels, px>200 17892 both ways) - the iPad's output did not
-change at all. So the iPad is *already* computing what an explicit bilinear fetch computes, and the sampling is not
-the mechanism; the difference is downstream, in how the accumulated HDR values end up 2.3x higher on that GPU.
+- **the per-draw highlight tint** (golden pots): `LARECOMP_LOG_TINT` keeps a log of every nonzero tint and
+  it never fires on either platform without a randomizer seed (`[tint]` lines: none).
+- **BC1 textures**: decoding them on the CPU changed the readback, so that path is not what the GPU
+  samples; with it reverted the device's albedo is byte-identical to the Mac's and the tunic still blows.
+- **the shadow comparison**: `LARECOMP_NO_SHADOW` (comparison always passes) does not move it.
+- **Metal's fast math**: compiling the shaders with `fastMathEnabled = NO` does not move it.
+- **out-of-domain transcendentals**: keeping `log2` / `sqrt` / `rsqrt` arguments in domain (see below)
+  does not move it either.
+- point vs bilinear sampling of the RG11B10 bloom levels (measured earlier, see above).
 
-Next candidates, none yet tested: a per-GPU difference in blending/storing into `RG11B10Float` (the levels are HDR
-and are built by read-modify-write passes), and the *vertex* shader pairing for the bloom quads (only the fragment
-MSL pairs were compared - heap addresses differ per run, so shaders have to be matched by content, not address).
+What is in the tree from this: the MUFU ops now clamp their argument, and the runtime tint clamps its
+luminance/exponent, so a NaN cannot reach the HDR target and be read as a saturated white pixel. That is
+defensive rather than a fix for this case.
+
+Next: the engine's own final clamp is `fmin(colour, cb3[25][0])`, i.e. it *allows* blown highlights, so
+the value on the device is genuinely large rather than a NaN. The shader's lighting has several
+reciprocals and `log2`/`exp2` speculars, and the camera is still moving, so the two GPUs are landing on
+opposite sides of a discontinuity. Bisecting that needs `LARECOMP_DBG_FS=<fs addr>:<pc>:<reg>`, which
+pushes one register of a chosen instruction out as the pixel value; the fragment code addresses are
+stable across runs and platforms (e.g. `72fbab9300` for Link's body shader).
+

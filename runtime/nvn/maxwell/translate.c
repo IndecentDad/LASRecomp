@@ -946,14 +946,20 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     } else if (OPM(0x5080000000000000ull, 0xfff8000000000000ull)) {  // MUFU
         int fn = (int)bits(w, 20, 4);
         const char *x = NA(F(R(a)), bits(w, 48, 1), bits(w, 46, 1));
+        // MUFU is the GPU's approximate transcendental unit. What it does with an out-of-domain argument is not
+        // the same across GPU generations: log2 of a tiny negative is NaN on Apple's M3 but a large finite value
+        // on the M2, and a NaN written into the game's HDR target reads as a saturated white pixel that the
+        // bloom then spreads across the screen. That is how Link's tunic and hands blew out white on an M2 iPad
+        // and not on an M3 Mac (the game computes pow(1 - c, e) speculars; when c rounds just above 1, 1 - c is a
+        // tiny negative, which is meant to mean "no specular at all", i.e. 0). Keep the argument in domain:
         switch (fn) {
         case 0: sprintf(t, "cos(%s)", x); break;
         case 1: sprintf(t, "sin(%s)", x); break;
         case 2: sprintf(t, "exp2(%s)", x); break;
-        case 3: sprintf(t, "log2(%s)", x); break;
+        case 3: sprintf(t, "log2(fmax(%s, 1e-30f))", x); break;   // log2(<0) = NaN; log2(0) = -inf, and -inf * 0 = NaN
         case 4: sprintf(t, "(1.0f / %s)", x); break;
-        case 5: sprintf(t, "rsqrt(%s)", x); break;
-        case 8: sprintf(t, "sqrt(%s)", x); break;
+        case 5: sprintf(t, "rsqrt(fmax(%s, 1e-30f))", x); break;  // rsqrt(0) = +inf
+        case 8: sprintf(t, "sqrt(fmax(%s, 0.0f))", x); break;     // sqrt(<0) = NaN
         default: fail(c, "mufu %d", fn); return;
         }
         set_reg(c, d, FRES(t, bits(w, 50, 1)));
@@ -1846,8 +1852,10 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
             }
         }
         if (tint)
-            sp(&s, "  if (ltint[0].w > 0.0f) { vec3 g = c0.rgb; float l = dot(g, vec3(0.299f, 0.587f, 0.114f));\n"
-                   "    c0.rgb = mix(g, ltint[0].rgb * pow(l, ltint[1].w) + ltint[1].rgb * l, ltint[0].w); }\n");
+            // (the luminance and the exponent are clamped for the same reason the MUFU ops above are: pow() of a
+            // negative base is NaN, and a NaN in the HDR target reads as a saturated white pixel)
+            sp(&s, "  if (ltint[0].w > 0.0f) { vec3 g = c0.rgb; float l = clamp(dot(g, vec3(0.299f, 0.587f, 0.114f)), 0.0f, 1.0f);\n"
+                   "    c0.rgb = mix(g, ltint[0].rgb * pow(l, max(ltint[1].w, 0.0f)) + ltint[1].rgb * l, clamp(ltint[0].w, 0.0f, 1.0f)); }\n");
         if (c->omap_depth) {
             if (c->reg_used[r + 1]) sp(&s, "  gl_FragDepth = as_f(r%d);\n", r + 1);
             else sp(&s, "  gl_FragDepth = gl_FragCoord.z;\n");
@@ -2070,8 +2078,8 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
             }
         }
         if (tint)
-            sp(&s, "  if (ltint[0].w > 0.0f) { float3 g = o.c0.rgb; float l = dot(g, float3(0.299f, 0.587f, 0.114f));\n"
-                   "    o.c0.rgb = mix(g, ltint[0].rgb * pow(l, ltint[1].w) + ltint[1].rgb * l, ltint[0].w); }\n");
+            sp(&s, "  if (ltint[0].w > 0.0f) { float3 g = o.c0.rgb; float l = clamp(dot(g, float3(0.299f, 0.587f, 0.114f)), 0.0f, 1.0f);\n"
+                   "    o.c0.rgb = mix(g, ltint[0].rgb * pow(l, max(ltint[1].w, 0.0f)) + ltint[1].rgb * l, clamp(ltint[0].w, 0.0f, 1.0f)); }\n");
         if (c->omap_depth) {
             if (c->reg_used[r + 1]) sp(&s, "  o.depth = as_type<float>(r%d);\n", r + 1);
             else sp(&s, "  o.depth = in.pos.z;\n");

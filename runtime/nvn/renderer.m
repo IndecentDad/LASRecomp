@@ -16,6 +16,8 @@
 #include "nvn.h"
 #include "renderer.h"
 
+static uint64_t hmix(uint64_t h, const void *p, size_t n);  // (shader code fingerprint; defined below)
+
 static id<MTLDevice> dev;
 static id<MTLCommandBuffer> cmdbuf;
 static id<MTLRenderCommandEncoder> enc;
@@ -942,6 +944,14 @@ static Prog *get_program(NvnProgram *p, ShaderKey *vkey, ShaderKey *fkey) {
         FILE *f = fopen(path, "w"); fputs(pr->vi->msl, f); fclose(f);
         snprintf(path, sizeof path, "build/msl/%llx_fs.metal", p->stages[1].code_addr);
         f = fopen(path, "w"); fputs(pr->fi->msl, f); fclose(f);
+        // also keyed by the content fingerprint the [fshash] log prints: the code addresses above are heap addresses
+        // and differ between runs, so shaders can only be paired across runs/platforms by this hash
+        uint64_t vh = p->stages[0].code_addr ? hmix(1469598103934665603ull, (const void *)(uintptr_t)(p->stages[0].code_addr + 0x30), 0x200) : 0;
+        uint64_t fh = p->stages[1].code_addr ? hmix(1469598103934665603ull, (const void *)(uintptr_t)(p->stages[1].code_addr + 0x30), 0x200) : 0;
+        snprintf(path, sizeof path, "build/msl/%016llx_vs.metal", (unsigned long long)vh);
+        f = fopen(path, "w"); fputs(pr->vi->msl, f); fclose(f);
+        snprintf(path, sizeof path, "build/msl/%016llx_fs.metal", (unsigned long long)fh);
+        f = fopen(path, "w"); fputs(pr->fi->msl, f); fclose(f);
     }
     shader_cache_note(pr->vi->msl, pr->fi->msl);
     if (sync_shaders()) {
@@ -1498,9 +1508,20 @@ static id<MTLBuffer> expand_indices(uint32_t mode, uint32_t count, const void *i
 }
 
 static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
-    static uint64_t dump_fs = 1;
-    if (dump_fs == 1) { const char *e = getenv("LARECOMP_DUMP_UBO"); dump_fs = e ? strtoull(e, NULL, 16) : 0; }
-    if (dump_fs && st.program && st.program->stages[1].code_addr == dump_fs) {
+    static uint64_t dump_fs = 1, dump_hash;
+    if (dump_fs == 1) {
+        const char *e = getenv("LARECOMP_DUMP_UBO");
+        // "hash:<fingerprint>" matches by the content hash the [fshash] log prints: shader code addresses are heap
+        // addresses and differ between runs, so a shader can only be named reliably by its hash
+        if (e && !strncmp(e, "hash:", 5)) { dump_hash = strtoull(e + 5, NULL, 16); dump_fs = 0; }
+        else dump_fs = e ? strtoull(e, NULL, 16) : 0;
+    }
+    uint64_t cur_hash = 0;
+    if (dump_hash && st.program && st.program->stages[1].code_addr)
+        cur_hash = hmix(1469598103934665603ull, (const void *)(uintptr_t)(st.program->stages[1].code_addr + 0x30), 0x200);
+    if ((dump_fs && st.program && st.program->stages[1].code_addr == dump_fs) || (dump_hash && cur_hash == dump_hash)) {
+        static unsigned dno;
+        LOG("[ubo] draw %u\n", dno++);
         for (int i = 0; i < 18; i++) {
             if (!st.ubuf[1][i].addr) continue;
             const float *f = (const float *)(uintptr_t)st.ubuf[1][i].addr;
@@ -1518,7 +1539,9 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         for (uint64_t k = 0; k < st.ubuf[0][i].size / 4 && k < 48; k++) LOG(" %g", f[k]);
         LOG("\n");
     }
-    if (st.sbuf[0][0].addr && st.sbuf[0][0].size >= 64 && st.sbuf[0][0].size <= 8192) {
+    static int dump_ssbo = -1;  // LARECOMP_DUMP_SSBO: dump vertex storage buffer 0 whatever its range size
+    if (dump_ssbo < 0) dump_ssbo = getenv("LARECOMP_DUMP_SSBO") != NULL;
+    if (st.sbuf[0][0].addr && (dump_ssbo || (st.sbuf[0][0].size >= 64 && st.sbuf[0][0].size <= 8192))) {
         int recw = (st.sbuf[0][0].size % 96 == 0 && st.sbuf[0][0].size % 64 != 0) ? 24 : 16;
         const float *f = (const float *)(uintptr_t)st.sbuf[0][0].addr;
         const uint32_t *u = (const uint32_t *)f;
@@ -2011,6 +2034,19 @@ static void draw(CmdRec *r, bool indexed) {
             escape_bottle_tint(draw_bottle, (const float *)(uintptr_t)st.ubuf[0][u].addr, (uint32_t)st.ubuf[0][u].size, tint);
         }
         if (draw_heart) { extern void texpatch_heart_tint(int kind, float tint[8]); texpatch_heart_tint(draw_heart, tint); }
+        if (tint[3] > 0.0f && ENV("LARECOMP_LOG_TINT")) {  // which shader is being tinted (tint[3] = t0.w, the strength)
+            uint64_t fh = st.program && st.program->stages[1].code_addr
+                              ? hmix(1469598103934665603ull, (const void *)(uintptr_t)(st.program->stages[1].code_addr + 0x30), 0x200)
+                              : 0;
+            static uint64_t said[64];
+            static int nsaid;
+            bool first = true;
+            for (int i = 0; i < nsaid; i++)
+                if (said[i] == fh) first = false;
+            if (first && nsaid < 64) said[nsaid++] = fh;
+            LOG("[tint] fs %016llx%s tint %.3f %.3f %.3f %.3f | glow %.3f %.3f %.3f e %.3f\n", (unsigned long long)fh,
+                first ? " NEW" : "   ", tint[0], tint[1], tint[2], tint[3], tint[4], tint[5], tint[6], tint[7]);
+        }
         [enc setFragmentBytes:tint length:sizeof tint atIndex:19];
     }
     for (int s = 0; s < 12; s++) {
