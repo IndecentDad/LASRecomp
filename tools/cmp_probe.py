@@ -1,42 +1,53 @@
 #!/usr/bin/env python3
-"""Compare a probed register between two platforms.
+"""Compare one probed register between two platforms.
 
 `LARECOMP_DBG_FS_HASH=<fingerprint>:<pc>:<reg>` makes the chosen shader output that one register as the pixel
-value, so the dump of the scene target shows the register across the object's silhouette (all three channels
-equal). Run the same probe on both platforms at the same frame and pass the two pass_006 dumps here.
+value, so the scene-target dump shows it across the object's silhouette (all three channels equal). Run the
+same probe with the same pacing on both platforms and pass the two dumps here.
+
+The object is found as the densest 64x64 tile of "lit grey" pixels - equal channels, value >= 3. A whole-image
+histogram does not work: naturally grey scene pixels and the black border outnumber the object.
+
+Caveat: the dump goes through an RGBA8 target, so any probed value >= 1.0 clips to 255. Two platforms that both
+saturate cannot be told apart - probe the *input* of a suspect operation (a small value) rather than its output.
 """
 import sys
 
 import numpy as np
 from PIL import Image
 
-BOX = (1180, 980, 1560, 1300)  # Link, in the 2732x1537 scene target
+TILE = 64
 
 
-def load(p):
-    a = np.asarray(Image.open(p).convert("RGB")).astype(np.int16)
-    return a
+def blob(path):
+    a = np.asarray(Image.open(path).convert("RGB")).astype(np.int16)
+    eq = (a[..., 0] == a[..., 1]) & (a[..., 1] == a[..., 2]) & (a[..., 0] >= 3)
+    h, w = eq.shape
+    best = (0, 0, 0)
+    for y in range(0, h - TILE, TILE):
+        for x in range(0, w - TILE, TILE):
+            c = int(eq[y:y + TILE, x:x + TILE].sum())
+            if c > best[0]:
+                best = (c, y, x)
+    c, y, x = best
+    v = a[y:y + TILE, x:x + TILE, 0][eq[y:y + TILE, x:x + TILE]]
+    return c, (x, y), v
 
 
 def main():
-    a, b = load(sys.argv[1]), load(sys.argv[2])
-    ca, cb = a[BOX[1]:BOX[3], BOX[0]:BOX[2]], b[BOX[1]:BOX[3], BOX[0]:BOX[2]]
-    gray = lambda c: np.abs(c - c.mean(axis=2, keepdims=True)).max() < 3
-    print(f"A {sys.argv[1]}: crop mean {ca.reshape(-1,3).mean(0).round(1)} max {ca.reshape(-1,3).max(0)} "
-          f"grayscale {gray(ca).mean():.3f}")
-    print(f"B {sys.argv[2]}: crop mean {cb.reshape(-1,3).mean(0).round(1)} max {cb.reshape(-1,3).max(0)} "
-          f"grayscale {gray(cb).mean():.3f}")
-    # both are register values (grayscale); compare the red channel over the silhouette
-    ma = ca[..., 0]
-    mb = cb[..., 0]
-    both = (ma > 2) | (mb > 2)
-    if not both.any():
-        print("no probed pixels found in either")
-        return
-    d = np.abs(ma - mb)[both]
-    print(f"pixels probed in either: {int(both.sum())}   differing >2: {int((d > 2).sum())} "
-          f"({100.0 * (d > 2).mean():.1f}%)   max diff {int(d.max())}")
-    print(f"A mean {ma[both].mean():.1f}   B mean {mb[both].mean():.1f}")
+    out = []
+    for p in sys.argv[1:3]:
+        c, (x, y), v = blob(p)
+        bands = [int(((v >= 3) & (v <= 20)).sum()), int(((v > 20) & (v <= 80)).sum()),
+                 int(((v > 80) & (v <= 200)).sum()), int((v > 200).sum())]
+        sat = 100.0 * bands[3] / max(len(v), 1)
+        print(f"{p:36s} tile ({x:4d},{y:4d}) probed {c:5d} mean {v.mean():6.1f} max {v.max():3d} "
+              f"3-20/20-80/80-200/>200 {bands} saturated {sat:.0f}%")
+        out.append((v, bands))
+    if len(out) == 2:
+        (va, ba), (vb, bb) = out
+        if ba[3] > 0.9 * len(va) and bb[3] > 0.9 * len(vb):
+            print("both saturate -> indistinguishable, probe an input instead")
 
 
 main()

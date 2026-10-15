@@ -209,3 +209,10 @@ Remaining register sites, in execution order, with what they hold (from the anno
 `pc aa8/ab0 r4/r5` light x albedo; `pc c68 r4`, `pc c90 r5`, `pc f10 r6`, `pc 1148 r6`
 (fma(r36,r36,...) then 1/x) further reciprocals; `pc cc8/cd8/1268/1368` saturate() light factors;
 `pc 2018 r0` log2; `pc 2130 r2` exp2; `pc 2250/22d0 r0` accumulation; `pc 2310 r0` pre-clamp.
+
+The probe has a blind spot worth remembering: the dump goes through an RGBA8 target, so a probed value
+>= 1.0 clips to 255 and two platforms that both saturate look identical. Probe the *input* of a suspect
+operation (a small value that can cross zero) rather than its output. Also, the object is found by the
+densest 64x64 tile of equal-channel pixels (a whole-image histogram is dominated by grey scene pixels
+and the black border), and each probe dump must be pulled to a unique name right away - the device
+overwrites Documents/build/pass_006.png on every run. `tools/cmp_probe.py` does the above.
