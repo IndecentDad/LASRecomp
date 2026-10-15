@@ -80,6 +80,9 @@ extern uint64_t maxwell_gmem_base, maxwell_gmem_size;
 extern const uint8_t *maxwell_dbg_code;
 extern uint32_t maxwell_dbg_pc;
 extern int maxwell_dbg_reg;
+// Debug: the same probe selected by the shader's content fingerprint (the [fshash] log's) instead of by code
+// address - the heap reuses code blocks within a run, so an address can name a different shader than intended.
+extern uint64_t maxwell_dbg_hash;
 // Debug: the vertex shader at maxwell_dbg_vs writes each vertex's position to buffer 18 (slot iid*8+vid).
 extern const uint8_t *maxwell_dbg_vs;
 #define DBG_VS_BUFFER_INDEX 29

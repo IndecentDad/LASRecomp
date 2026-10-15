@@ -918,8 +918,25 @@ static Prog *get_program(NvnProgram *p, ShaderKey *vkey, ShaderKey *fkey) {
         static int vparsed;
         if (!vparsed) { vparsed = 1; const char *e = getenv("LARECOMP_DBG_VS"); if (e) dbg_vs = strtoull(e, NULL, 16); }
         maxwell_dbg_vs = dbg_vs ? (const uint8_t *)(uintptr_t)dbg_vs : NULL;
-        maxwell_dbg_pc = dbg_pc;
-        maxwell_dbg_reg = dbg_reg;
+        // LARECOMP_DBG_FS_HASH=<fingerprint hex>:<pc hex>:<reg>: the same probe, selected by the shader's code
+        // fingerprint instead of by address. It has to be applied here rather than once inside the translator:
+        // this block runs for every program and assigns pc/reg, so a one-off assignment there would be clobbered
+        // by the next program's compile (which is why the address form always worked and the hash form did not).
+        static int hparsed, dbg_hash_on;
+        static unsigned long long dbg_hash;
+        static unsigned dbg_hpc;
+        static int dbg_hreg;
+        if (!hparsed) {
+            hparsed = 1;
+            const char *e = getenv("LARECOMP_DBG_FS_HASH");
+            if (e && sscanf(e, "%llx:%x:%d", &dbg_hash, &dbg_hpc, &dbg_hreg) == 3) {
+                dbg_hash_on = 1;
+                LOG("[dbg] probing shader %016llx pc %x reg %d\n", dbg_hash, dbg_hpc, dbg_hreg);
+            }
+        }
+        maxwell_dbg_hash = dbg_hash_on ? dbg_hash : 0;
+        if (dbg_hash_on) { maxwell_dbg_pc = dbg_hpc; maxwell_dbg_reg = dbg_hreg; }
+        else { maxwell_dbg_pc = dbg_pc; maxwell_dbg_reg = dbg_reg; }
     }
     // the compiler constants follow the code, so they bound the instruction scan
     size_t vmax = p->stages[0].const_offset ? p->stages[0].const_offset : 0x10000;

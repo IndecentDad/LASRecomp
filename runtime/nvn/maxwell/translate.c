@@ -38,20 +38,6 @@ static uint64_t maxwell_code_fp(const uint8_t *blob) {
     for (size_t i = 0; i < 0x200; i++) { h ^= blob[0x30 + i]; h *= 0x100000001B3ull; }
     return h;
 }
-static void maxwell_dbg_init(void) {
-    static int done;
-    if (done++) return;
-    const char *e = getenv("LARECOMP_DBG_FS_HASH");  // <fingerprint hex>:<pc hex>:<reg>
-    unsigned long long fp;
-    unsigned pc;
-    int reg;
-    if (e && sscanf(e, "%llx:%x:%d", &fp, &pc, &reg) == 3) {
-        maxwell_dbg_hash = fp;
-        maxwell_dbg_pc = pc;
-        maxwell_dbg_reg = reg;
-        fprintf(stderr, "[dbg] probing shader %016llx pc %x reg %d\n", fp, pc, reg);
-    }
-}
 
 #define RZ 255
 #define LMEM_WORDS 256  // local memory per invocation (1 KB)
@@ -1955,7 +1941,6 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         (void)is_branch_target_op;
     }
     // translate
-    maxwell_dbg_init();
     bool dbg = stage == STAGE_FRAGMENT &&
                ((maxwell_dbg_code && blob == maxwell_dbg_code) ||
                 (maxwell_dbg_hash && maxwell_code_fp(blob) == maxwell_dbg_hash));
