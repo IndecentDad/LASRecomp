@@ -142,9 +142,29 @@ evaluate that shader differently. The candidates that were tested and are *not* 
   does not move it either.
 - point vs bilinear sampling of the RG11B10 bloom levels (measured earlier, see above).
 
-What is in the tree from this: the MUFU ops now clamp their argument, and the runtime tint clamps its
-luminance/exponent, so a NaN cannot reach the HDR target and be read as a saturated white pixel. That is
-defensive rather than a fix for this case.
+Two further measurements settle the arithmetic candidates:
+
+- **The texture fetch is correct.** `LARECOMP_DBG_FS=72fbab9300:208:8` (the albedo sample) renders
+  Link's silhouette as that register: max 147, no white pixels. So BC1 / sRGB / mip / sampler are all
+  exonerated and the blow-up is in the lighting.
+- **Neither the approximate transcendental units nor their precision are it.**
+  `LARECOMP_PRECISE_MATH` routes every MUFU through Metal's `precise::` (IEEE) versions; in the *scene
+  target* the device goes from 16969 to 17687 white pixels (Link's crop 14073 -> 14791) against the
+  Mac's 3651 / 0.
+
+**Judge a candidate on the scene target, not the window shot.** `pass_006` is the scene before the
+bloom, `LARECOMP_WINDOW_SHOT` includes it. `LARECOMP_LOD_MAX=0` (8160 -> 3853),
+`LARECOMP_NO_DEPTH_SCALE` (8160 -> 4430) and `LARECOMP_PRECISE_MATH` (8160 -> 3323) each look like a
+partial fix in the window shot, but they only shrink the bloom *halo* around Link - his core stays pure
+white in the scene target every time, where the Mac is 3651 and the device 16969.
+
+Also: `LARECOMP_DBG_FS` hangs the macOS build (the render loop stalls at frame 11 with a 54-second
+frame) while the same probe runs fine on the iPad, so cross-platform register comparison is
+device-only until that is understood.
+
+What is in the tree from this: the MUFU ops clamp their argument and `LARECOMP_PRECISE_MATH` selects
+the IEEE variants, and the runtime tint clamps its luminance/exponent, so a NaN cannot reach the HDR
+target and be read as a saturated white pixel. That is defensive rather than a fix for this case.
 
 Next: **mip levels.** Link is white in every one of 16 consecutive frames from the moment the room
 appears (frames 9400-12200, `build/dev_frames/`), while the camera is still moving, so it is not a

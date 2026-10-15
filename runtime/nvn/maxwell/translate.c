@@ -946,6 +946,11 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     } else if (OPM(0x5080000000000000ull, 0xfff8000000000000ull)) {  // MUFU
         int fn = (int)bits(w, 20, 4);
         const char *x = NA(F(R(a)), bits(w, 48, 1), bits(w, 46, 1));
+        // LARECOMP_PRECISE_MATH: call Metal's IEEE (precise) transcendentals instead of letting each GPU family
+        // answer with its own approximate unit. Same shader, same inputs, and the two still differ - this is the
+        // one purely arithmetic place left where that can happen. (MSL only: the GLSL spelling has no precise::.)
+        static const char *mufu_p;
+        if (!mufu_p) mufu_p = getenv("LARECOMP_PRECISE_MATH") ? "precise::" : "";
         // MUFU is the GPU's approximate transcendental unit. What it does with an out-of-domain argument is not
         // the same across GPU generations: log2 of a tiny negative is NaN on Apple's M3 but a large finite value
         // on the M2, and a NaN written into the game's HDR target reads as a saturated white pixel that the
@@ -953,13 +958,13 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         // and not on an M3 Mac (the game computes pow(1 - c, e) speculars; when c rounds just above 1, 1 - c is a
         // tiny negative, which is meant to mean "no specular at all", i.e. 0). Keep the argument in domain:
         switch (fn) {
-        case 0: sprintf(t, "cos(%s)", x); break;
-        case 1: sprintf(t, "sin(%s)", x); break;
-        case 2: sprintf(t, "exp2(%s)", x); break;
-        case 3: sprintf(t, "log2(fmax(%s, 1e-30f))", x); break;   // log2(<0) = NaN; log2(0) = -inf, and -inf * 0 = NaN
+        case 0: sprintf(t, "%scos(%s)", mufu_p, x); break;
+        case 1: sprintf(t, "%ssin(%s)", mufu_p, x); break;
+        case 2: sprintf(t, "%sexp2(%s)", mufu_p, x); break;
+        case 3: sprintf(t, "%slog2(fmax(%s, 1e-30f))", mufu_p, x); break;   // log2(<0) = NaN; log2(0) = -inf, and -inf * 0 = NaN
         case 4: sprintf(t, "(1.0f / %s)", x); break;
-        case 5: sprintf(t, "rsqrt(fmax(%s, 1e-30f))", x); break;  // rsqrt(0) = +inf
-        case 8: sprintf(t, "sqrt(fmax(%s, 0.0f))", x); break;     // sqrt(<0) = NaN
+        case 5: sprintf(t, "%srsqrt(fmax(%s, 1e-30f))", mufu_p, x); break;  // rsqrt(0) = +inf
+        case 8: sprintf(t, "%ssqrt(fmax(%s, 0.0f))", mufu_p, x); break;     // sqrt(<0) = NaN
         default: fail(c, "mufu %d", fn); return;
         }
         set_reg(c, d, FRES(t, bits(w, 50, 1)));
