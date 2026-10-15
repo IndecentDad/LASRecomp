@@ -1,0 +1,97 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+    timeout-minutes: 360
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      GAME_FILES_URL: ${{ secrets.LAS_GAME_FILES_URL }}
+      GAME_FILES_SHA256: ${{ secrets.LAS_GAME_FILES_SHA256 }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          brew install cmake ninja xcodegen python@3.12
+          /opt/homebrew/bin/python3.12 -m venv tools/venv
+          tools/venv/bin/python -m pip install --upgrade pip
+          tools/venv/bin/pip install capstone==5.0.9 unicorn==2.1.4 lz4==4.4.5 numpy pillow
+
+      - name: Obtain private game files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$GAME_FILES_URL" ]]; then
+            echo "::error::Set the repository secret LAS_GAME_FILES_URL to a private, short-lived HTTPS URL for a ZIP of your own v1.0.0 extracted game files."
+            exit 1
+          fi
+          curl --fail --location --retry 3 --silent --show-error "$GAME_FILES_URL" -o "$RUNNER_TEMP/game.zip"
+          if [[ -n "$GAME_FILES_SHA256" ]]; then
+            echo "$GAME_FILES_SHA256  $RUNNER_TEMP/game.zip" | shasum -a 256 -c -
+          fi
+          mkdir -p "$RUNNER_TEMP/game-unpacked"
+          unzip -q "$RUNNER_TEMP/game.zip" -d "$RUNNER_TEMP/game-unpacked"
+          # Archive must have extracted/exefs/{main,sdk,main.npdm} and extracted/romfs/.
+          if [[ -d "$RUNNER_TEMP/game-unpacked/extracted" ]]; then
+            mv "$RUNNER_TEMP/game-unpacked/extracted" ./extracted
+          else
+            echo "::error::Archive must contain an extracted/ directory at its root."
+            exit 1
+          fi
+          test -f extracted/exefs/main
+          test -f extracted/exefs/sdk
+          test -d extracted/romfs
+          tools/check_game_files.sh extracted
+          rm -rf "$RUNNER_TEMP/game-unpacked" "$RUNNER_TEMP/game.zip"
+
+      - name: Generate game code
+        run: |
+          make gen
+
+      - name: Compile iOS libraries
+        run: |
+          make -j3 ios-deps
+          make -j3 ios-game-lib
+
+      - name: Generate Xcode project
+        run: make ios-xcode
+
+      - name: Build unsigned iOS app
+        run: |
+          xcodebuild -project ios/LASRecomp.xcodeproj \
+            -scheme LASRecomp -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/ios/dd \
+            CODE_SIGNING_ALLOWED=NO \
+            PRODUCT_BUNDLE_IDENTIFIER=com.indecentdad.lasrecomp \
+            RT_BASE=0x7000000000 \
+            build
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="build/ios/dd/Build/Products/Release-iphoneos/LAS Recomp.app"
+          test -d "$APP"
+          mkdir -p build/ipa/Payload
+          cp -R "$APP" build/ipa/Payload/
+          (cd build/ipa && zip -qry ../LASRecomp-unsigned.ipa Payload)
+          test -s build/LASRecomp-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LASRecomp-unsigned-IPA
+          path: build/LASRecomp-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
