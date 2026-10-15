@@ -335,3 +335,18 @@ out; any bound tight enough to fix it breaks them), so the argument itself has t
 the register that feeds each `rsqrt`/`log2`/`sqrt` - the pre-guard value - with
 `LARECOMP_DBG_SCALE` large enough to see small numbers (and note that a *negative* probed value is
 invisible in the unsigned HDR dump, which is why the probe needs an offset mode to show the sign).
+
+Capping the reciprocal does **not** fix it: with `LARECOMP_MUFU_RCP_MAX=1e4` (on by default) the
+device's scene target is 16845 white pixels with Link's crop still 13949 and max 255, against 16969
+and 14073 before and 3651 / 0 on macOS. So the 1/0 -> +inf path (a degenerate half-precision
+penumbra width fed to a reciprocal) is not the residual blow-out either.
+
+Structural facts worth keeping, because they cut the search down:
+- every `rsqrt` argument is `fma(v, v, acc)`, a running sum of squares - it cannot go negative, so
+  the `rsqrt` guards never fire and the 1e15 floor theory is dead;
+- the `sqrt` arguments are one `saturate(1 - r27)` (already in [0,1]) and six `hpack(hx(a) + hx(b))`
+  half-precision sums, which is where a variance can come out a tiny negative;
+- the guards together fixed the *NaN* (shapeless circle -> shaped white), so the residual is a
+  genuinely large (>= 1) finite colour that survives every domain clamp. Nothing that clamps the
+  guarded ops' degenerate cases touches it, which means the large value is produced *upstream* of
+  them, not by them.
