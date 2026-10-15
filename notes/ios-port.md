@@ -188,3 +188,24 @@ platforms (e.g. `72fbab9300` for Link's body shader). `pc 1f0`-`238` are the fou
 shadow taps, `pc 208`/`248`/`250` are the albedo and mask fetches, `pc 22f0` is the final colour.
 
 
+
+## Register bisection (working method)
+
+`LARECOMP_DBG_FS_HASH=<fingerprint>:<pc hex>:<reg>` makes exactly one shader (by the same
+fingerprint the `[fshash]` log prints) output that register as the pixel value after the
+instruction at `pc`, so the scene-target dump shows the register across the object's silhouette
+(all three channels equal). Both platforms must run the same probe *and* the same pacing
+(`LARECOMP_LAUNCHER_AUTOPLAY`, the same `LARECOMP_INPUT`, no extra per-frame logging), then
+compare the histogram of equal-channel pixels: the two runs' pixel counts come out close enough
+(50k vs 52k below) that the distributions are comparable across runs.
+
+First result, and the reason this is now a real bisection: **`pc 9d8 reg 7` (`r7 = 1/r7`, the
+first reciprocal, right after `pc 9c8: r7 = fmax(r7, cb1[1][0])`) matches** - Mac 50180
+equal-channel pixels in bands 3-20/20-80/80-200/>200 = 617/712/3650/10077, iPad 51943 =
+706/585/3436/9621. So that reciprocal is not where they part ways; the walk continues.
+
+Remaining register sites, in execution order, with what they hold (from the annotated MSL):
+`pc 648 r4` the four-tap shadow sum; `pc 918 r4/r5` banked light reads; `pc 9d8 r7` 1/x (matches);
+`pc aa8/ab0 r4/r5` light x albedo; `pc c68 r4`, `pc c90 r5`, `pc f10 r6`, `pc 1148 r6`
+(fma(r36,r36,...) then 1/x) further reciprocals; `pc cc8/cd8/1268/1368` saturate() light factors;
+`pc 2018 r0` log2; `pc 2130 r2` exp2; `pc 2250/22d0 r0` accumulation; `pc 2310 r0` pre-clamp.
