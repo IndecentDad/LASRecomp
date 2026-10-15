@@ -146,10 +146,25 @@ What is in the tree from this: the MUFU ops now clamp their argument, and the ru
 luminance/exponent, so a NaN cannot reach the HDR target and be read as a saturated white pixel. That is
 defensive rather than a fix for this case.
 
-Next: the engine's own final clamp is `fmin(colour, cb3[25][0])`, i.e. it *allows* blown highlights, so
-the value on the device is genuinely large rather than a NaN. The shader's lighting has several
-reciprocals and `log2`/`exp2` speculars, and the camera is still moving, so the two GPUs are landing on
-opposite sides of a discontinuity. Bisecting that needs `LARECOMP_DBG_FS=<fs addr>:<pc>:<reg>`, which
-pushes one register of a chosen instruction out as the pixel value; the fragment code addresses are
-stable across runs and platforms (e.g. `72fbab9300` for Link's body shader).
+Next: **mip levels.** Link is white in every one of 16 consecutive frames from the moment the room
+appears (frames 9400-12200, `build/dev_frames/`), while the camera is still moving, so it is not a
+threshold and not a state artifact - the same draw is simply shaded differently. The one input the
+comparison above did *not* cover is the texture's mip levels: `renderer_save_texture` samples through
+`present_sampler`, which is created with `MTLSamplerMipFilterNotMipmapped`, so every `dtex_*.png` ever
+diffed was mip **level 0** only. Link is a small object on screen, so his shader's implicit derivatives
+select a deeper mip, while the room's large BC1 surfaces sit at level 0 - which is exactly the split
+seen in the frame (only Link wrong; the room's BC1 objects fine). A mip that `upload_texture` never
+filled in is uninitialized, and uninitialized contents are not the same across GPU generations.
+
+So the next step is to view level N of a texture: add `LARECOMP_DUMP_MIP=<n>` to `renderer_save_texture`
+(a `newTextureViewWithPixelFormat:...levels:NSMakeRange(n, 1)` view), dump Link's 1024x1024 BC1 albedo
+(`dtex_067_4`, guest format `0x46`) at levels 0-4 on both platforms and compare. If the deeper levels
+differ (or read back blank), the fix is in `upload_texture`'s per-level blit or in the texture's
+`mipmapLevelCount`, not in the shader.
+
+Bisecting the shading itself needs `LARECOMP_DBG_FS=<fs addr>:<pc>:<reg>`, which pushes one register of
+a chosen instruction out as the pixel value; fragment code addresses are stable across runs and
+platforms (e.g. `72fbab9300` for Link's body shader). `pc 1f0`-`238` are the four `sample_compare`
+shadow taps, `pc 208`/`248`/`250` are the albedo and mask fetches, `pc 22f0` is the final colour.
+
 
