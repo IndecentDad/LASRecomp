@@ -253,3 +253,11 @@ after the fact - this happened twice. `end_pass` knows the frame number and whet
 active (`maxwell_dbg_hash`/`maxwell_dbg_pc`), so the dumps should carry a run-unique tag; until
 then, copy each dump to a unique name in the same step that pulls or reads it, and never analyse
 from the canonical path.
+
+First path-indicator data point (device): probing `pc bd0 reg 6` leaves Link's body *black* -
+zero equal-channel lit pixels in his crop - and `LARECOMP_DBG_SCALE=1000` changes nothing, so
+`dbgv` is never written there and his fragments do not execute `pc bd0` at all. By contrast
+`pc 9d8 reg 7` gives 7037 lit equal-channel pixels with max 255. So `pc bd0` sits on a branch
+the iPad's fragments skip; whether the Mac's fragments take it is the test that would confirm or
+kill the control-flow explanation. (macOS probe runs need retries: of five attempts, three
+stalled in the title sequence and one closed its window.)
