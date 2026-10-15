@@ -2,6 +2,10 @@ name: Build iOS IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ios-ipa.yml'
 
 permissions:
   contents: read
@@ -26,6 +30,9 @@ jobs:
           /opt/homebrew/bin/python3.12 -m venv tools/venv
           tools/venv/bin/python -m pip install --upgrade pip
           tools/venv/bin/pip install capstone==5.0.9 unicorn==2.1.4 lz4==4.4.5 numpy pillow
+
+      - name: Build shared iOS dependencies
+        run: make -j3 ios-deps
 
       - name: Obtain private game files
         shell: bash
@@ -60,7 +67,6 @@ jobs:
 
       - name: Compile iOS libraries
         run: |
-          make -j3 ios-deps
           make -j3 ios-game-lib
 
       - name: Generate Xcode project
