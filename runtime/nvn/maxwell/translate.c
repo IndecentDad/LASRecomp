@@ -979,10 +979,20 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
             env = getenv("LARECOMP_NO_MUFU_SQRT"); if (env && *env) noguard = "8";
             env = getenv("LARECOMP_NO_MUFU_RSQRT"); if (env && *env) noguard = "5";
         }
+        // LARECOMP_MUFU_FLOOR=<f>: the floor the guards clamp to (default 1e-30). rsqrt of a <=0 argument is
+        // then 1/sqrt(floor) - 1e15 by default, which is finite but astronomically large and blows the shading
+        // out to white; raising the floor shrinks it, which is how the "is that 1e15 the residual blow-out"
+        // question gets answered without a rebuild per value.
+        static float mfloor = -1;
+        if (mfloor < 0) mfloor = getenv("LARECOMP_MUFU_FLOOR") ? (float)atof(getenv("LARECOMP_MUFU_FLOOR")) : 1e-30f;
+        char floor_buf[32];  // (not static: translation can run on more than one guest thread)
+        char gbuf[64];
+        snprintf(floor_buf, sizeof floor_buf, "%.9g", (double)mfloor);
         // Default is the *guarded* form; the env vars above opt one op out. (The first cut of this tested
         // "|| !noguard[0]" too, which read as "no env set -> unguarded" and silently reverted every guard,
         // putting the NaN back and with it the shapeless white bloom.)
-        const char *g = (noguard[0] && noguard[0] == (char)('0' + fn)) ? "%s" : (fn == 8 ? "fmax(%s, 0.0f)" : "fmax(%s, 1e-30f)");
+        snprintf(gbuf, sizeof gbuf, "fmax(%%s, %s)", fn == 8 ? "0.0f" : floor_buf);
+        const char *g = (noguard[0] && noguard[0] == (char)('0' + fn)) ? "%s" : gbuf;
         char arg[128];
         switch (fn) {
         case 0: sprintf(t, "%scos(%s)", mufu_p, x); break;
