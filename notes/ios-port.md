@@ -366,3 +366,8 @@ iPad, reproduced in a matched state. That is the anchor for walking backwards al
 `pc 2250` -> `pc 22d0` -> `pc 20b0` -> `pc 2018` (`log2`) -> `pc 2130` (`exp2`) -> the amount of
 light accumulated into `r0`/`r1`/`r2` - using the same recipe (original input script + fingerprint
 probe), one pc per round, with `tools/cmp_probe.py` isolating the probed blob.
+
+The `pc 2250 r0` pair produced nothing: both runs exited before the debug frame (0 pass dumps in
+either log), so the files measured were stale dumps of the earlier `pc 22f0` run. Always confirm
+`saved build/pass_` reached 27 in the log before pulling or measuring - that check is what caught
+it. The `pc 22f0 r0` anchor stands: macOS mean 14.9 / max 88 against the iPad's saturated 255/255.
