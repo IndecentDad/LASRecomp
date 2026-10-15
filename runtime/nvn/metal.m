@@ -920,6 +920,18 @@ void renderer_save_texture(id<MTLTexture> tex, const char *path) {
         pipe = [dev newRenderPipelineStateWithDescriptor:pd error:nil];
     }
     id<MTLRenderCommandEncoder> e = [cb renderCommandEncoderWithDescriptor:rp];
+    // LARECOMP_DUMP_MIP=<n>: dump mip level n instead of level 0. present_sampler is not mipmapped, so every
+    // dtex dump is level 0 - but a small object on screen samples a deeper level, and only a dump shows whether
+    // that level actually holds the game's data on this GPU.
+    static int dump_mip = -2;
+    if (dump_mip == -2) { const char *me = getenv("LARECOMP_DUMP_MIP"); dump_mip = me ? atoi(me) : -1; }
+    if (dump_mip > 0 && (NSUInteger)dump_mip < tex.mipmapLevelCount) {
+        id<MTLTexture> v = [tex newTextureViewWithPixelFormat:tex.pixelFormat textureType:tex.textureType
+                                                      levels:NSMakeRange((NSUInteger)dump_mip, 1)
+                                                      slices:NSMakeRange(0, tex.arrayLength)];
+        if (v) { tex = v; w = tex.width; h = tex.height; }
+        else LOG("[metal] mip %d view failed for %s (%lu levels)\n", dump_mip, path, (unsigned long)tex.mipmapLevelCount);
+    }
     float flip = renderer_origin_lower_left() ? 1.0f : 0.0f;
     [e setRenderPipelineState:pipe];
     if (g_save_upright || strstr(path, "window")) flip = 0;  // the window image is already upright

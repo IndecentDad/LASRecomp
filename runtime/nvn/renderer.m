@@ -993,6 +993,12 @@ static id<MTLSamplerState> sampler_for(NvnSamplerDesc *d) {
     static float lodmin = -1;  // LARECOMP_LOD_MIN=<n>: skip the n sharpest mips everywhere (aliasing experiments)
     if (lodmin < 0) lodmin = getenv("LARECOMP_LOD_MIN") ? (float)atof(getenv("LARECOMP_LOD_MIN")) : 0;
     if (lodmin > 0 && mf > 1) sd.lodMinClamp = fmaxf(sd.lodMinClamp, lodmin);
+    // LARECOMP_LOD_MAX=<n>: never sample deeper than mip n. Forcing 0 pins every lookup to the one level the
+    // dtex dumps prove is identical across platforms, which is how a wrong deeper mip shows itself (Link is
+    // small on screen and so samples a high mip; the room's large surfaces do not).
+    static float lodmax = -1;
+    if (lodmax < 0) lodmax = getenv("LARECOMP_LOD_MAX") ? (float)atof(getenv("LARECOMP_LOD_MAX")) : -1;
+    if (lodmax >= 0 && mf > 1) sd.lodMaxClamp = fminf(sd.lodMaxClamp, lodmax);
     static int stest = -1;  // LARECOMP_SAMPLER_TEST: full mip range + 16x aniso on mipmapped samplers (moire test)
     if (stest < 0) stest = getenv("LARECOMP_SAMPLER_TEST") != NULL;
     if (stest && mf > 1) { sd.lodMinClamp = 0; sd.lodMaxClamp = FLT_MAX; sd.maxAnisotropy = 16; }
