@@ -216,3 +216,30 @@ operation (a small value that can cross zero) rather than its output. Also, the 
 densest 64x64 tile of equal-channel pixels (a whole-image histogram is dominated by grey scene pixels
 and the black border), and each probe dump must be pulled to a unique name right away - the device
 overwrites Documents/build/pass_006.png on every run. `tools/cmp_probe.py` does the above.
+
+## The probe is a path indicator, and that reframes the bug
+
+`pc 1148` and `pc bd0` probes came back with *no* silhouette at Link's position on the device
+(densest lit tile elsewhere, a few hundred pixels), while `pc 208` (texture sample) and `pc 9d8`
+(first reciprocal) both landed exactly on him. The reason: the translated shader is a
+`switch (pc)` state machine with branches, and the probe writes the register at one pc of *all*
+paths - pixels that never execute it keep the initial `dbgv = -1.0f`, which clamps to 0 in the
+dump and is invisible against the scene's dark areas. So:
+
+- only pcs on the *unconditional* path probe usefully;
+- a pc that is written on one branch and not another is a **path indicator**: untaken shows black.
+
+That matters because the leading explanation for "identical MSL, identical uniforms, identical
+texels, completely different picture" is no longer arithmetic - every arithmetic candidate has
+been tested and failed. It is that Link's pixels **take a different branch** on the M2 than on
+the M3 Pro. The shader is 1883 lines of translated state machine with many `FSETP`/`ISETP`
+comparisons, and a branch decided on a value that lands a ULP either side of its threshold will
+diverge between two GPU generations with everything else identical. It also explains why the
+probe of the *reciprocals* matched (both saturated) while the final colour did not, and why
+none of the domain/precision/mip/depth knobs moved the core.
+
+Next: use the probe as a path indicator rather than a value probe. Take a register written on
+one side of a branch, probe with `LARECOMP_DBG_SCALE=1` and *without* the "lit" filter, and
+compare the black-vs-nonblack pattern over Link between platforms - a different pattern is a
+different code path, and the pc of the comparison that chose it is the bug. `LARECOMP_DBG_SCALE`
+is in the tree for the small values on either side.
