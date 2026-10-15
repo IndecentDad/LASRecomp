@@ -2085,7 +2085,14 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
             for (int comp = 0; comp < 4; comp++) {
                 if (!(m & (1u << comp))) continue;
                 if (dbg) {
-                    sp(&s, comp == 3 ? "  o.c%d[%d] = 1.0f;\n" : "  o.c%d[%d] = dbgv;\n", rt, comp);
+                    // LARECOMP_DBG_SCALE=<f>: multiply the probed register before it goes out. The dump ends up in
+                    // an RGBA8 target, so values below ~1/255 read as 0 and values above 1 read as 255 - neither
+                    // the *inputs* of a suspect operation (small) nor a saturating output can be seen without it.
+                    static float dscale = -1;
+                    if (dscale < 0) dscale = getenv("LARECOMP_DBG_SCALE") ? (float)atof(getenv("LARECOMP_DBG_SCALE")) : 1.0f;
+                    if (comp == 3) sp(&s, "  o.c%d[%d] = 1.0f;\n", rt, comp);
+                    else if (dscale == 1.0f) sp(&s, "  o.c%d[%d] = dbgv;\n", rt, comp);
+                    else sp(&s, "  o.c%d[%d] = dbgv * %gf;\n", rt, comp, dscale);
                 } else if (r < 256 && c->reg_used[r]) {
                     if (kind == 0) sp(&s, "  o.c%d[%d] = as_type<float>(r%d);\n", rt, comp, r);
                     else sp(&s, "  o.c%d[%d] = r%d;\n", rt, comp, r);
