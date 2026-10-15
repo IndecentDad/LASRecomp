@@ -999,7 +999,18 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         case 1: sprintf(t, "%ssin(%s)", mufu_p, x); break;
         case 2: sprintf(t, "%sexp2(%s)", mufu_p, x); break;
         case 3: snprintf(arg, sizeof arg, g, x); sprintf(t, "%slog2(%s)", mufu_p, arg); break;
-        case 4: sprintf(t, "(1.0f / %s)", x); break;
+        // LARECOMP_MUFU_RCP_MAX=<f>: cap a reciprocal's result (default 1e4; sign preserved, so a negative
+        // denominator still gives a negative result). The shader's penumbra widths come out of half-precision
+        // variance sums, and cancellation can make one a tiny negative on the M2 where the M3 Pro gets a tiny
+        // positive: sqrt then gives 0 (guarded) and 1/0 is +inf - a white blow-out that keeps the silhouette,
+        // while unguarded it is NaN and the bloom smears that into a shapeless circle. Capping the result makes
+        // a degenerate width mean "a hard shadow edge" instead of an infinite light.
+        static float rcp_max = -1;
+        if (rcp_max < 0) rcp_max = getenv("LARECOMP_MUFU_RCP_MAX") ? (float)atof(getenv("LARECOMP_MUFU_RCP_MAX")) : 1e4f;
+        case 4:
+            if (rcp_max > 0) snprintf(t, 220, "fmin((1.0f / %s), %.9gf)", x, (double)rcp_max);
+            else sprintf(t, "(1.0f / %s)", x);
+            break;
         case 5: snprintf(arg, sizeof arg, g, x); sprintf(t, "%srsqrt(%s)", mufu_p, arg); break;
         case 8: snprintf(arg, sizeof arg, g, x); sprintf(t, "%ssqrt(%s)", mufu_p, arg); break;
         default: fail(c, "mufu %d", fn); return;
