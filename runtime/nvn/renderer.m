@@ -1386,7 +1386,20 @@ static CsProg *compute_program(NvnProgram *p) {
         if (!cp->local[i]) cp->local[i] = 1;
     }
     NSError *err = nil;
-    id<MTLLibrary> lib = TIMED_COMPILE([dev newLibraryWithSource:@(cp->si->msl) options:nil error:&err]);
+    // LARECOMP_IEEE_COMPUTE: compile the compute shaders with fast math off. The game builds its screen-space light
+    // table (the banked table the fragment shaders read at a dynamic offset) with compute dispatches that write
+    // gmem, and fast math governs contraction and denormals there - a different lever from which instruction the
+    // transcendentals use, which is what LARECOMP_PRECISE_MATH covers.
+    static MTLCompileOptions *copts;
+    static int copt_done;
+    if (!copt_done) {
+        copt_done = 1;
+        if (getenv("LARECOMP_IEEE_COMPUTE")) {
+            copts = [MTLCompileOptions new];
+            copts.fastMathEnabled = NO;
+        }
+    }
+    id<MTLLibrary> lib = TIMED_COMPILE([dev newLibraryWithSource:@(cp->si->msl) options:copts error:&err]);
     id<MTLFunction> f = lib ? [lib newFunctionWithName:@"main0"] : nil;
     cp->pipe = f ? TIMED_COMPILE([dev newComputePipelineStateWithFunction:f error:&err]) : nil;
     if (!cp->pipe) {

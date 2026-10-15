@@ -309,3 +309,9 @@ guest memory (the fragment shader reads it as `cbr(cb10, r35 + n)` at a dynamic 
 covers the compute stage and did not fix the scene white, so the remaining untested lever there
 is the compute library's own fast-math setting (`MTLCompileOptions.fastMathEnabled = NO` for
 compute, which affects contraction and denormals rather than which instruction is used).
+
+Compute-stage fast math is ruled out too: `LARECOMP_IEEE_COMPUTE` (MTLCompileOptions.fastMathEnabled
+= NO for the compute library, which builds the screen-space light table) leaves the scene target at
+17919 white pixels against 16969 without it and 3651 on macOS. So the light table's compute-stage
+contraction/denormals are not the difference either. The player confirms the white bloom is still
+there in the current build, i.e. none of the shipped changes touch the visible bug.
