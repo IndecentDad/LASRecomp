@@ -5,10 +5,10 @@
 // remapping, the button-prompt textures and the in-game menu's controller navigation all keep working unchanged -
 // and a physically connected controller is handled by the very same code path.
 //
-// Layout (fractions of the window, so it scales with any window size): a stick bottom-left, the four face buttons
+// Layout (shared pixel geometry for drawing and hit-testing): a stick bottom-left, the four face buttons
 // bottom-right, L/ZL and R/ZR along the top edges, and -/+ plus the overlay-menu button top centre. Touches are
 // tracked per finger, so the stick and a button can be held at the same time; a finger that slides off a button
-// releases it. The pad hides itself while a real controller is connected.
+// releases it. Control sizes scale around fixed edge anchors. Auto mode hides the pad with a real controller.
 #pragma once
 
 #include <stdbool.h>

@@ -63,6 +63,19 @@ static void sp(Str *s, const char *fmt, ...) {
     s->len += n;
 }
 
+// Transform only a captured value: an unvisited probe keeps its black sentinel, even with an offset.
+// Offset 0.5 makes negative lighting inputs visible in the unsigned scene dump; scale sets the range.
+static void debug_transform(Str *s) {
+    const char *e = getenv("LARECOMP_DBG_SCALE");
+    float scale = e ? strtof(e, NULL) : 1.0f;
+    e = getenv("LARECOMP_DBG_OFFSET");
+    float offset = e ? strtof(e, NULL) : 0.0f;
+    if (!isfinite(scale)) scale = 1.0f;
+    if (!isfinite(offset)) offset = 0.0f;
+    if (scale != 1.0f || offset != 0.0f)
+        sp(s, "    dbgv = dbgv * float(%#.9g) + float(%#.9g);\n", scale, offset);
+}
+
 typedef struct {
     const uint8_t *code;   // first instruction group
     size_t ninsts;         // number of 8-byte words to scan
@@ -1869,7 +1882,10 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         if (c->pred_used[i]) sp(&s, "  bool p%d = false;\n", i);
     if (c->uses_cc) sp(&s, "  uint cc = 0u; bool ccz = false, ccs = false;\n");
     if (c->uses_local) sp(&s, "  uint lmem[%d]; for (int li_ = 0; li_ < %d; li_++) lmem[li_] = 0u;\n", LMEM_WORDS, LMEM_WORDS);
-    if (dbg) sp(&s, maxwell_dbg_pc == 0xffffffffu ? "  float dbgv = 1.0f;\n" : "  float dbgv = -1.0f;\n");
+    if (dbg) {
+        sp(&s, maxwell_dbg_pc == 0xffffffffu ? "  float dbgv = 1.0f;\n" : "  float dbgv = -1.0f;\n");
+        if (maxwell_dbg_pc == 0xffffffffu) debug_transform(&s);
+    }
     if (any_branch) {
         sp(&s, "  uint pc = 8u; uint ssy[16]; uint ssy_n = 0u; uint pbk[16]; uint pbk_n = 0u; uint pcnt[16]; uint pcnt_n = 0u;\n");
         sp(&s, "  bool exit_now = false;\n");
@@ -1993,8 +2009,9 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         if (dbg && pc == maxwell_dbg_pc) {
             int rr = maxwell_dbg_reg % 1000, half = maxwell_dbg_reg / 1000;  // +1000: low f16, +2000: high f16
             c->reg_used[rr] = 1;
-            if (half) sp(&c->body, c->glsl ? "    dbgv = unpackHalf2x16(r%d)[%d];\n" : "    dbgv = float(as_type<half2>(r%d)[%d]);\n", rr, half - 1);
+            if (half) sp(&c->body, "    dbgv = h2f((r%d >> %du) & 0xFFFFu);\n", rr, 16 * (half - 1));
             else sp(&c->body, "    dbgv = as_type<float>(r%d);\n", rr);
+            debug_transform(&c->body);
         }
         info->num_insts++;
     }
@@ -2011,7 +2028,13 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     sp(&s, "static inline uint bfi(uint ins, uint ctl, uint base) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u || pos >= 32u) return base; return insert_bits(base, ins, pos, min(len, 32u - pos)); }\n");
     sp(&s, "static inline float fswzadd(float a, float b, uint swz, uint lane) { uint m = (swz >> ((lane & 3u) * 2u)) & 3u; float ma = m == 1u ? -1.0f : (m == 3u ? 0.0f : 1.0f); float mb = m == 2u ? -1.0f : 1.0f; return a * ma + b * mb; }\n");
     sp(&s, "static inline uint2 rsc(uint2 c, float4 s) { return (s.x == 1.0f && s.y == 1.0f) ? c : uint2(floor((float2(c) + 0.5f) * s.xy)); }\n");
-    sp(&s, "static inline float2 hx(uint v, uint swz) { if (swz == 1u) return float2(as_type<float>(v)); float2 h = float2(as_type<half2>(v)); return swz == 2u ? h.xx : swz == 3u ? h.yy : h; }\n");
+    // Decode packed Maxwell halves by bits, as in the GLSL backend, so lighting variance arithmetic does not
+    // expose native fp16 operands to the Metal optimizer. Preserve subnormals in the resulting fp32 values.
+    sp(&s, "static inline float h2f(uint h) { uint s = (h & 0x8000u) << 16, e = (h >> 10) & 0x1Fu, m = h & 0x3FFu;"
+           " if (e == 0u) { float d = float(m) * 5.9604644775390625e-8f; return s != 0u ? -d : d; }"
+           " if (e == 31u) return as_type<float>(s | 0x7F800000u | (m << 13));"
+           " return as_type<float>(s | ((e + 112u) << 23) | (m << 13)); }\n");
+    sp(&s, "static inline float2 hx(uint v, uint swz) { if (swz == 1u) return float2(as_type<float>(v)); float2 h = float2(h2f(v & 0xFFFFu), h2f(v >> 16)); return swz == 2u ? h.xx : swz == 3u ? h.yy : h; }\n");
     sp(&s, "static inline uint hpack(float2 r, uint merge, uint old) { if (merge == 1u) return as_type<uint>(r.x); uint lo = uint(as_type<ushort>(half(r.x))), hi = uint(as_type<ushort>(half(r.y))); if (merge == 2u) return (old & 0xFFFF0000u) | lo; if (merge == 3u) return (old & 0xFFFFu) | (hi << 16); return lo | (hi << 16); }\n");
     sp(&s, "static inline uint prmt(uint a, uint b, uint sel) { uint r = 0; for (uint i = 0; i < 4; i++) { uint s = (sel >> (i * 4)) & 7u; uint byte = s < 4 ? (a >> (s * 8)) & 0xFFu : (b >> ((s - 4) * 8)) & 0xFFu; r |= byte << (i * 8); } return r; }\n");
 
@@ -2097,7 +2120,10 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         if (c->pred_used[i]) sp(&s, "  bool p%d = false;\n", i);
     if (c->uses_cc) sp(&s, "  uint cc = 0; bool ccz = false, ccs = false;\n");
     if (c->uses_local) sp(&s, "  uint lmem[%d] = {};\n", LMEM_WORDS);
-    if (dbg) sp(&s, maxwell_dbg_pc == 0xffffffffu ? "  float dbgv = 1.0f;\n" : "  float dbgv = -1.0f;\n");
+    if (dbg) {
+        sp(&s, maxwell_dbg_pc == 0xffffffffu ? "  float dbgv = 1.0f;\n" : "  float dbgv = -1.0f;\n");
+        if (maxwell_dbg_pc == 0xffffffffu) debug_transform(&s);
+    }
     if (any_branch) {
         sp(&s, "  uint pc = 8u; uint ssy[16]; uint ssy_n = 0; uint pbk[16]; uint pbk_n = 0; uint pcnt[16]; uint pcnt_n = 0;\n");
         sp(&s, "  bool exit_now = false;\n");
@@ -2122,14 +2148,8 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
             for (int comp = 0; comp < 4; comp++) {
                 if (!(m & (1u << comp))) continue;
                 if (dbg) {
-                    // LARECOMP_DBG_SCALE=<f>: multiply the probed register before it goes out. The dump ends up in
-                    // an RGBA8 target, so values below ~1/255 read as 0 and values above 1 read as 255 - neither
-                    // the *inputs* of a suspect operation (small) nor a saturating output can be seen without it.
-                    static float dscale = -1;
-                    if (dscale < 0) dscale = getenv("LARECOMP_DBG_SCALE") ? (float)atof(getenv("LARECOMP_DBG_SCALE")) : 1.0f;
                     if (comp == 3) sp(&s, "  o.c%d[%d] = 1.0f;\n", rt, comp);
-                    else if (dscale == 1.0f) sp(&s, "  o.c%d[%d] = dbgv;\n", rt, comp);
-                    else sp(&s, "  o.c%d[%d] = dbgv * %gf;\n", rt, comp, dscale);
+                    else sp(&s, "  o.c%d[%d] = dbgv;\n", rt, comp);
                 } else if (r < 256 && c->reg_used[r]) {
                     if (kind == 0) sp(&s, "  o.c%d[%d] = as_type<float>(r%d);\n", rt, comp, r);
                     else sp(&s, "  o.c%d[%d] = r%d;\n", rt, comp, r);

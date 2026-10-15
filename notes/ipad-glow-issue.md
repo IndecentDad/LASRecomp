@@ -1,6 +1,9 @@
-# iPad-only glow: Link's tunic and hands blow out to white (Apple M2 vs M3 Pro)
+# Fixed: iPad Link glow from the Metal packed-half path
 
-## Symptom
+Resolved on the physical iPad Air M2 on 2026-10-15 by decoding packed half operands into fp32 by bits.
+The original symptom and investigation are retained below.
+
+## Original symptom
 
 On the iPad, Link's own draw renders blown out to white while the same frame renders correctly on
 macOS. The bloom then spreads the saturated pixels, which is the "glowing" the player sees: with the
@@ -67,6 +70,45 @@ probes the sampled albedo and gives a dark value (max 147, no white pixels).
 
 ## Current state
 
+### Verified fix: decode packed half operands by bits (2026-10-15)
+
+The Metal `hx()` helper now uses the GLSL backend's bit-based half-to-float conversion instead of
+`float2(as_type<half2>(v))`. This removes native half operands from the following lighting arithmetic.
+The exact compiler lowering was not disassembled, but replacing this conversion fixes the physical
+M2 rendering while retaining the healthy M3 Pro output. No texture replacement or colour clamp is
+needed for the fix.
+
+Matched frame 12000, before bloom, with the original recipe above:
+
+| build | scene white (>245) | Link crop white | crop max |
+|---|---:|---:|---:|
+| previous iPad reciprocal-cap build | 16845 | 13949 | 255 |
+| fixed iPad M2 | 3670 | **0** | 145 |
+| fixed Mac M3 Pro | 3651 | **0** | 143 |
+
+The fixed iPad's displayed frame was also inspected: Link has green clothing and no white halo.
+A second device run walked him outside into `Field`; his tunic and shield also render correctly
+in daylight (`ipad-outdoor-window.png`, `ipad-outdoor.log`), and the run exited with code 0.
+Evidence: `build/glow-half/ipad-candidate-scene.png`, `ipad-candidate-window.png`,
+`scene-comparison.json`, and `ipad-candidate.log`. The app completed the capture and exited with
+code 0. Saves and settings were copied to scratch locations before launching.
+
+The numerical check is reproducible with `make build/test_metal_half && build/test_metal_half`.
+All 65,536 half encodings and finite paired-lane round trips pass on the M3 Pro. The test also
+renders synthetic fragment probes with positive, negative and zero scales, a signed offset, and
+an unvisited probe PC. The signed-offset GLSL probe compiles to Vulkan 1.3 SPIR-V with `glslc`.
+Link's reconstructed body shader and four captured compute programs compile; macOS and signed
+iPadOS builds succeed. GPU access is required for the numerical test.
+
+`LARECOMP_DBG_OFFSET=0.5` now maps a zero-valued probe to mid-grey; combine with
+`LARECOMP_DBG_SCALE` to show small signed inputs. The transform is applied only when the probe PC
+executes, so skipped branches remain black even with a negative or zero scale. It works in both
+MSL and GLSL. For a matched device/host probe, `6804ba6e5340c6f9:878:41` probes a signed
+variance term before its square root; probe `898:40` for the other term. Use the same scale and
+offset on both platforms and preserve each scene dump under a unique run name immediately.
+
+### Historical state before the packed-half fix
+
 The guards removed a **NaN** (that is what destroyed his silhouette). What remains is a **genuinely
 large (>= 1) finite colour that survives every domain clamp**, so it is produced *upstream* of the
 guarded ops rather than by their degenerate cases - which excludes the whole "clamp the degenerate
@@ -92,8 +134,8 @@ The room's lighting also differs at a matched frame, in the same patchy, screen-
 * `LARECOMP_DBG_FS_HASH=<fingerprint>:<pc hex>:<reg>` - probe one register by content fingerprint
   (the address form matches the wrong shader: the heap reuses code blocks within a run, which made
   macOS runs crawl at 40-60 s/frame on a launcher shader). `reg+1000`/`+2000` read the low/high f16
-  lane. `LARECOMP_DBG_SCALE` scales the value out; note the dump is unsigned, so a **negative** value
-  is invisible - an offset mode is still needed.
+  lane. `LARECOMP_DBG_SCALE` scales the value out; `LARECOMP_DBG_OFFSET` adds a signed-view offset
+  after scaling (0.5 places zero at mid-grey). Unvisited probe PCs remain black.
 * `LARECOMP_MUFU_FLOOR`, `LARECOMP_MUFU_RCP_MAX`, `LARECOMP_NO_MUFU_LOG2/_SQRT/_RSQRT`,
   `LARECOMP_PRECISE_MATH`, `LARECOMP_IEEE_COMPUTE`, `LARECOMP_LOD_MAX`, `LARECOMP_DUMP_MIP`.
 * `tools/cmp_passes.py`, `tools/cmp_draw_inputs.py`, `tools/cmp_probe.py` (the last isolates the

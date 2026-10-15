@@ -316,6 +316,13 @@ smoketest:
 build/test_shaders: tools/test_shaders.m runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
 	clang -O1 -fobjc-arc -framework Metal -framework Foundation -o $@ tools/test_shaders.m runtime/nvn/maxwell/translate.c
 
+build/test_metal_half: tools/test_metal_half.m runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
+	@mkdir -p build
+	clang -O1 -fobjc-arc -framework Metal -framework Foundation -o $@ tools/test_metal_half.m runtime/nvn/maxwell/translate.c
+
+build/test_touch_pad: tools/test_touch_pad.mm runtime/ui/touch_pad.mm runtime/ui/touch_pad.h $(filter-out %imgui_impl_sdl3.o %imgui_impl_metal.o %imgui_impl_vulkan.o,$(IMGUI_OBJ))
+	$(CXX) $(CXXFLAGS) $(UIFLAGS) -o $@ tools/test_touch_pad.mm $(filter-out %imgui_impl_sdl3.o %imgui_impl_metal.o %imgui_impl_vulkan.o,$(IMGUI_OBJ)) -L$(SDL)/lib -lSDL3 -Wl,-rpath,$(SDL)/lib
+
 # Is extracted/ a usable copy of the game (v1.0.0 build id, exefs, romfs, data image)?
 check-files:
 	tools/check_game_files.sh extracted

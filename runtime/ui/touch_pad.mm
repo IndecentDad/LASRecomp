@@ -30,62 +30,71 @@ static Touch g_touch[MAX_TOUCH];
 static float g_stick_x, g_stick_y;   // the stick's current position (0..1 of the pad radius)
 static bool g_btn[SDL_GAMEPAD_BUTTON_COUNT];
 
-// ------------------------------------------------------------------ layout (window fractions)
+// ------------------------------------------------------------------ layout (drawable pixels)
 typedef struct { float x, y; } V2;
 
 static float g_scale = 1.0f;
-static bool g_visible = true;      // touch_controls setting
-static bool g_drawn;               // what the last draw pass did (for hit-testing consistency)
+static bool g_visible = true;
+static bool g_drawn;
+static struct {
+    float w, h, unit, edge, bottom;
+    float stick_r, knob_r, face_r, face_gap, small_r;
+    float shoulder_w, shoulder_h, shoulder_gap, top;
+    V2 stick, face;
+} g_layout;
 
-// (kept clear of the screen edges and the home-indicator area: the iPad's corners are rounded)
-#define STICK_CX 0.150f
-#define STICK_CY  0.635f
-#define STICK_R   0.095f
-#define KNOB_R    0.042f
-#define FACE_CX   0.820f
-#define FACE_CY   0.635f
-#define FACE_D    0.068f
-#define FACE_R    0.037f
-#define SHOULDER_Y 0.135f
-#define SHOULDER_H 0.085f
-#define SHOULDER_W 0.090f
-#define SMALL_R   0.030f
+// Scale control sizes around their anchors, never the anchors themselves. Drawing and hit testing use the
+// same pixel geometry, so the size slider and different screen aspect ratios cannot move the touch targets.
+static void layout(float w, float h) {
+    g_layout.w = w; g_layout.h = h;
+    const float unit = fminf(w, h), size = unit * g_scale;
+    g_layout.unit = unit;
+    g_layout.edge = unit * 0.045f;
+    g_layout.bottom = h - unit * 0.037f;
+    g_layout.stick_r = size * 0.080f;
+    g_layout.knob_r = size * 0.031f;
+    g_layout.face_r = size * 0.032f;
+    g_layout.face_gap = g_layout.face_r * 1.85f;
+    g_layout.small_r = size * 0.022f;
+    g_layout.shoulder_w = size * 0.078f;
+    g_layout.shoulder_h = size * 0.039f;
+    g_layout.shoulder_gap = size * 0.012f;
+    g_layout.top = unit * 0.045f;
+    g_layout.stick = {g_layout.edge + g_layout.stick_r, g_layout.bottom - g_layout.stick_r};
+    const float reach = g_layout.face_gap + g_layout.face_r;
+    g_layout.face = {w - g_layout.edge - reach, g_layout.bottom - reach};
+}
 
-static float px(float frac, float size) { return frac * size * g_scale; }
-
-// A round button's centre in window fractions.
 static V2 face_pos(int ctl, float *r_out) {
-    V2 c = {FACE_CX, FACE_CY};
-    // The Switch's own diamond - A right, B bottom, X top, Y left - which is what the game's prompts draw (the
-    // default bindings are positional: runtime/hle/bindings.c DEF_PAD binds Switch A to the controller's east button).
+    V2 c = g_layout.face;
     switch (ctl) {
-    case CTL_A: c.x += FACE_D * 1.35f; break;
-    case CTL_B: c.y += FACE_D; break;
-    case CTL_X: c.y -= FACE_D; break;
-    case CTL_Y: c.x -= FACE_D * 1.35f; break;
+    case CTL_A: c.x += g_layout.face_gap; break;
+    case CTL_B: c.y += g_layout.face_gap; break;
+    case CTL_X: c.y -= g_layout.face_gap; break;
+    case CTL_Y: c.x -= g_layout.face_gap; break;
     }
-    if (r_out) *r_out = FACE_R;
+    if (r_out) *r_out = g_layout.face_r;
     return c;
 }
 
 static V2 small_pos(int ctl, float *r_out) {
-    V2 c = {0.5f, 0.115f};
-    if (ctl == CTL_MINUS) c.x -= 0.075f;
-    else if (ctl == CTL_PLUS) c.x += 0.075f;
-    else c.x += 0.155f;  // the overlay menu button sits past +, away from the face buttons
-    if (r_out) *r_out = SMALL_R;
+    V2 c = {g_layout.w * 0.5f, g_layout.top + g_layout.small_r};
+    if (ctl == CTL_MINUS) c.x -= g_layout.small_r * 2.9f;
+    else if (ctl == CTL_MENU) c.x += g_layout.small_r * 2.9f;
+    if (r_out) *r_out = g_layout.small_r;
     return c;
 }
 
 static bool shoulder_rect(int ctl, float *x, float *y, float *w, float *h) {
-    *y = SHOULDER_Y - SHOULDER_H * 0.5f;
-    *h = SHOULDER_H;
-    *w = SHOULDER_W;
+    *y = g_layout.top;
+    *h = g_layout.shoulder_h;
+    *w = g_layout.shoulder_w;
+    const float pair = *w + g_layout.shoulder_gap;
     switch (ctl) {
-    case CTL_L:  *x = 0.085f - SHOULDER_W * 0.5f; return true;
-    case CTL_ZL: *x = 0.205f - SHOULDER_W * 0.5f; return true;
-    case CTL_R:  *x = 0.915f - SHOULDER_W * 0.5f; return true;
-    case CTL_ZR: *x = 0.795f - SHOULDER_W * 0.5f; return true;
+    case CTL_L:  *x = g_layout.edge; return true;
+    case CTL_ZL: *x = g_layout.edge + pair; return true;
+    case CTL_R:  *x = g_layout.w - g_layout.edge - *w; return true;
+    case CTL_ZR: *x = g_layout.w - g_layout.edge - *w - pair; return true;
     }
     return false;
 }
@@ -105,15 +114,14 @@ static int ctl_from_name(const char *n) {
         if (!strcasecmp(CTL_NAMES[i].name, n)) return CTL_NAMES[i].ctl;
     return CTL_NONE;
 }
+// Synthetic finger events use SDL's normalized window coordinates, just like physical touches.
 static V2 ctl_centre(int ctl) {
-    float r;
-    if (ctl >= CTL_A && ctl <= CTL_Y) return face_pos(ctl, &r);
-    if (ctl == CTL_MINUS || ctl == CTL_PLUS || ctl == CTL_MENU) return small_pos(ctl, &r);
-    if (ctl == CTL_STICK) { V2 c = {STICK_CX, STICK_CY}; return c; }
-    float x, y, w, h;
-    if (shoulder_rect(ctl, &x, &y, &w, &h)) { V2 c = {x + w * 0.5f, y + h * 0.5f}; return c; }
-    V2 c = {0.5f, 0.5f};
-    return c;
+    float r, x, y, w, h;
+    V2 c = g_layout.stick;
+    if (ctl >= CTL_A && ctl <= CTL_Y) c = face_pos(ctl, &r);
+    else if (ctl == CTL_MINUS || ctl == CTL_PLUS || ctl == CTL_MENU) c = small_pos(ctl, &r);
+    else if (shoulder_rect(ctl, &x, &y, &w, &h)) c = {x + w * 0.5f, y + h * 0.5f};
+    return {c.x / g_layout.w, c.y / g_layout.h};
 }
 
 
@@ -226,15 +234,16 @@ static Touch *touch_find(SDL_FingerID id, bool create) {
     return NULL;
 }
 
-// Which control is at this point (window fractions)? Buttons win over the stick area.
+// SDL supplies normalized coordinates; convert once into the exact geometry that was drawn.
 static int hit(float x, float y) {
+    x *= g_layout.w; y *= g_layout.h;
     float r;
     static const int faces[] = {CTL_A, CTL_B, CTL_X, CTL_Y, CTL_MINUS, CTL_PLUS, CTL_MENU};
     for (size_t i = 0; i < sizeof faces / sizeof *faces; i++) {
         // (the enum puts the small buttons *before* the face buttons, so this is a range test, not a <= one)
         V2 c = faces[i] >= CTL_A ? face_pos(faces[i], &r) : small_pos(faces[i], &r);
-        float dx = (x - c.x), dy = (y - c.y) * 0.75f;  // (iPad screens are wider than tall: keep the hit area round)
-        if (dx * dx + dy * dy <= (r * 1.35f) * (r * 1.35f)) return faces[i];
+        float dx = x - c.x, dy = y - c.y;
+        if (dx * dx + dy * dy <= (r * 1.18f) * (r * 1.18f)) return faces[i];
     }
     float bx, by, bw, bh;
     static const int sh[] = {CTL_L, CTL_ZL, CTL_R, CTL_ZR};
@@ -243,8 +252,8 @@ static int hit(float x, float y) {
             y >= by - bh * 0.3f && y <= by + bh * 1.3f)
             return sh[i];
     {
-        float dx = (x - STICK_CX), dy = (y - STICK_CY) * 0.75f;
-        if (dx * dx + dy * dy <= (STICK_R * 1.5f) * (STICK_R * 1.5f)) return CTL_STICK;
+        float dx = x - g_layout.stick.x, dy = y - g_layout.stick.y;
+        if (dx * dx + dy * dy <= (g_layout.stick_r * 1.2f) * (g_layout.stick_r * 1.2f)) return CTL_STICK;
     }
     return CTL_NONE;
 }
@@ -298,7 +307,9 @@ bool touch_pad_event(const SDL_Event *e) {
         Touch *t = touch_find(e->tfinger.fingerID, false);
         if (!t) return false;
         if (t->ctl == CTL_STICK) {
-            float dx = (e->tfinger.x - t->sx) / (STICK_R * g_scale), dy = (e->tfinger.y - t->sy) / (STICK_R * g_scale);
+            float travel = g_layout.stick_r * 0.62f;
+            float dx = (e->tfinger.x - t->sx) * g_layout.w / travel;
+            float dy = (e->tfinger.y - t->sy) * g_layout.h / travel;
             float len = sqrtf(dx * dx + dy * dy);
             if (len > 1.0f) { dx /= len; dy /= len; }
             g_stick_x = dx;
@@ -382,8 +393,12 @@ void touch_pad_frame(uint64_t frame) {
         SDL_Event e = {0};
         e.type = release_at ? SDL_EVENT_FINGER_MOTION : SDL_EVENT_FINGER_DOWN;
         e.tfinger.fingerID = 9002;
-        if (!release_at) { e.tfinger.x = STICK_CX; e.tfinger.y = STICK_CY; }
-        else { e.tfinger.x = STICK_CX + x * STICK_R; e.tfinger.y = STICK_CY + y * STICK_R; }
+        V2 centre = ctl_centre(CTL_STICK);
+        e.tfinger.x = centre.x; e.tfinger.y = centre.y;
+        if (release_at) {
+            e.tfinger.x += x * g_layout.stick_r * 0.62f / g_layout.w;
+            e.tfinger.y += y * g_layout.stick_r * 0.62f / g_layout.h;
+        }
         touch_pad_event(&e);
         release_at = frame + 60;
         break;
@@ -421,63 +436,79 @@ static void label(ImDrawList *dl, ImVec2 c, const char *s, float size, ImU32 col
     dl->AddText(ImGui::GetFont(), size, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), col, s);
 }
 
-static void rrect(ImDrawList *dl, float x, float y, float w, float h, ImU32 fill, ImU32 line, float th) {
-    ImVec2 a(px(x, ImGui::GetIO().DisplaySize.x), px(y, ImGui::GetIO().DisplaySize.y));
-    ImVec2 b(px(x + w, ImGui::GetIO().DisplaySize.x), px(y + h, ImGui::GetIO().DisplaySize.y));
-    dl->AddRectFilled(a, b, fill, 12 * g_scale);
-    dl->AddRect(a, b, line, 12 * g_scale, 0, th);
+// Thin glass outlines and a restrained warm accent keep the controls readable over bright scenery.
+static float g_press[CTL_Y + 1];
+static ImU32 mix_color(ImU32 a, ImU32 b, float t) {
+    ImVec4 x = ImGui::ColorConvertU32ToFloat4(a), y = ImGui::ColorConvertU32ToFloat4(b);
+    return ImGui::ColorConvertFloat4ToU32(ImVec4(x.x + (y.x-x.x)*t, x.y + (y.y-x.y)*t,
+                                               x.z + (y.z-x.z)*t, x.w + (y.w-x.w)*t));
 }
 
 void touch_pad_draw(float dw, float dh, bool menu_open, bool in_game) {
-    g_scale = g_settings.touch_scale > 0.3f ? g_settings.touch_scale : 1.0f;
-    g_drawn = visible_in(menu_open, in_game);
+    touch_pad_set_scale(g_settings.touch_scale > 0.3f ? g_settings.touch_scale : 1.0f);
+    bool shown = visible_in(menu_open, in_game);
+    if (!shown && g_drawn) {
+        // Opening the menu or connecting a controller must not leave a captured touch held down.
+        for (int i = 0; i < MAX_TOUCH; i++) if (g_touch[i].ctl) {
+            SDL_Event e = {}; e.type = SDL_EVENT_FINGER_CANCELED; e.tfinger.fingerID = g_touch[i].id;
+            touch_pad_event(&e);
+        }
+    }
+    g_drawn = shown;
     if (!g_drawn) return;
+    layout(dw, dh);
     ImDrawList *dl = ImGui::GetForegroundDrawList();
-    const float size = fminf(dw, dh);  // one scale for both axes: circles stay round on a 4:3 screen
-    const float fade = 0.30f;
-    const ImU32 fill = IM_COL32(20, 24, 32, (int)(255 * fade));
-    const ImU32 line = IM_COL32(215, 220, 230, (int)(255 * fade * 2.1f));
-    const ImU32 text = IM_COL32(235, 238, 245, (int)(255 * fade * 2.6f));
-    const float th = 2.0f * g_scale;
-    const ImU32 press = IM_COL32(250, 205, 90, (int)(255 * fade * 2.4f));
+    const float u = g_layout.unit, th = fmaxf(1.0f, u * 0.0010f);
+    const ImU32 fill = IM_COL32(20, 26, 31, 92), line = IM_COL32(235, 238, 231, 78);
+    const ImU32 text = IM_COL32(246, 245, 235, 215), accent = IM_COL32(235, 196, 115, 220);
+    const ImU32 pressed = IM_COL32(124, 100, 48, 155);
+    const float blend = fminf(1.0f, ImGui::GetIO().DeltaTime * 18.0f);
+    for (int ctl = CTL_L; ctl <= CTL_Y; ctl++)
+        g_press[ctl] += ((ctl_down(ctl) ? 1.0f : 0.0f) - g_press[ctl]) * blend;
 
-    // stick
-    {
-        ImVec2 c(px(STICK_CX, dw), px(STICK_CY, dh));
-        float r = px(STICK_R, size);
-        dl->AddCircleFilled(c, r, fill, 48);
-        dl->AddCircle(c, r, line, 48, th);
-        ImVec2 k(c.x + g_stick_x * r * 0.62f, c.y + g_stick_y * r * 0.62f);
-        bool held = fabsf(g_stick_x) > 0.02f || fabsf(g_stick_y) > 0.02f;
-        ring(dl, k, px(KNOB_R, size), held ? IM_COL32(250, 205, 90, 150) : fill, held ? press : line, th);
+    // The lower anchors use the bottom letterbox space instead of covering the middle of the game.
+    ImVec2 c(g_layout.stick.x, g_layout.stick.y);
+    float r = g_layout.stick_r;
+    const bool held = fabsf(g_stick_x) > 0.02f || fabsf(g_stick_y) > 0.02f;
+    ring(dl, c, r, IM_COL32(15, 21, 27, 48), IM_COL32(235, 238, 231, 62), th);
+    dl->AddCircle(c, r * 0.74f, IM_COL32(235, 238, 231, 22), 48, th);
+    for (int i = 0; i < 4; i++) {
+        float a = i * 1.570796327f;
+        ImVec2 p(c.x + cosf(a) * r * 0.85f, c.y + sinf(a) * r * 0.85f);
+        ImVec2 q(c.x + cosf(a) * r * 0.92f, c.y + sinf(a) * r * 0.92f);
+        dl->AddLine(p, q, line, th);
     }
-    // face buttons
-    static const struct { int ctl; const char *name; } faces[] = {{CTL_A, "A"}, {CTL_B, "B"}, {CTL_X, "X"}, {CTL_Y, "Y"}};
-    for (size_t i = 0; i < sizeof faces / sizeof *faces; i++) {
-        float r;
-        V2 p = face_pos(faces[i].ctl, &r);
-        bool down = ctl_down(faces[i].ctl);
-        ImVec2 c(px(p.x, dw), px(p.y, dh));
-        ring(dl, c, px(r, size), down ? IM_COL32(250, 205, 90, 170) : fill, down ? press : line, th);
-        label(dl, c, faces[i].name, px(r, size) * 1.05f, text);
+    ImVec2 k(c.x + g_stick_x * r * 0.62f, c.y + g_stick_y * r * 0.62f);
+    dl->AddCircleFilled(ImVec2(k.x, k.y + th * 2), g_layout.knob_r + th, IM_COL32(0, 0, 0, 30), 40);
+    ring(dl, k, g_layout.knob_r, held ? pressed : fill, held ? accent : line, th);
+    dl->AddCircleFilled(k, th * 1.8f, held ? accent : IM_COL32(246, 245, 235, 90), 12);
+
+    static const int faces[] = {CTL_A, CTL_B, CTL_X, CTL_Y};
+    for (int ctl : faces) {
+        V2 p = face_pos(ctl, &r); c = ImVec2(p.x, p.y);
+        float active = g_press[ctl];
+        ImU32 outline = ctl == CTL_A ? IM_COL32(235, 196, 115, 125) : line;
+        dl->AddCircleFilled(ImVec2(c.x, c.y + th * 2), r + th, IM_COL32(0, 0, 0, 26), 40);
+        ring(dl, c, r, mix_color(fill, pressed, active), mix_color(outline, accent, active), th);
+        label(dl, c, ctl_name(ctl), r * 0.90f, mix_color(text, accent, active));
     }
-    // shoulders
-    static const struct { int ctl; const char *name; } sh[] = {{CTL_L, "L"}, {CTL_ZL, "ZL"}, {CTL_R, "R"}, {CTL_ZR, "ZR"}};
-    for (size_t i = 0; i < sizeof sh / sizeof *sh; i++) {
+    static const int shoulders[] = {CTL_L, CTL_ZL, CTL_R, CTL_ZR};
+    for (int ctl : shoulders) {
         float x, y, w, h;
-        if (!shoulder_rect(sh[i].ctl, &x, &y, &w, &h)) continue;
-        bool down = ctl_down(sh[i].ctl);
-        rrect(dl, x, y, w, h, down ? IM_COL32(250, 205, 90, 170) : fill, down ? press : line, th);
-        label(dl, ImVec2(px(x + w * 0.5f, dw), px(y + h * 0.5f, dh)), sh[i].name, px(SHOULDER_H, size) * 0.62f, text);
+        shoulder_rect(ctl, &x, &y, &w, &h);
+        const float active = g_press[ctl], rounding = h * 0.5f;
+        dl->AddRectFilled(ImVec2(x, y), ImVec2(x+w, y+h), mix_color(fill, pressed, active), rounding);
+        dl->AddRect(ImVec2(x, y), ImVec2(x+w, y+h), mix_color(line, accent, active), rounding, 0, th);
+        label(dl, ImVec2(x+w*0.5f, y+h*0.5f), ctl_name(ctl), h * 0.47f, text);
     }
-    // - + and the overlay menu
-    static const struct { int ctl; const char *name; } small[] = {{CTL_MINUS, "-"}, {CTL_PLUS, "+"}, {CTL_MENU, "="}};
-    for (size_t i = 0; i < sizeof small / sizeof *small; i++) {
-        float r;
-        V2 p = small_pos(small[i].ctl, &r);
-        bool down = ctl_down(small[i].ctl);
-        ImVec2 c(px(p.x, dw), px(p.y, dh));
-        ring(dl, c, px(r, size), down ? IM_COL32(250, 205, 90, 170) : fill, down ? press : line, th);
-        label(dl, c, small[i].name, px(r, size) * 1.05f, text);
+    static const int small[] = {CTL_MINUS, CTL_PLUS, CTL_MENU};
+    for (int ctl : small) {
+        V2 p = small_pos(ctl, &r); c = ImVec2(p.x, p.y);
+        ring(dl, c, r, mix_color(fill, pressed, g_press[ctl]), mix_color(line, accent, g_press[ctl]), th);
+        if (ctl != CTL_MENU) label(dl, c, ctl_name(ctl), r * 1.05f, text);
+        else for (int i = -1; i <= 1; i++) {
+            float y = c.y + i * r * 0.27f;
+            dl->AddLine(ImVec2(c.x-r*0.34f, y), ImVec2(c.x+r*0.34f, y), text, th * 1.2f);
+        }
     }
 }

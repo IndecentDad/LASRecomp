@@ -100,7 +100,17 @@ To check a pad mapping without a finger on the glass, `LARECOMP_TOUCH_TEST="<fra
 `runtime/hle/input.c`'s `SDL_EVENT_GAMEPAD_BUTTON_*` / `…_AXIS_MOTION` case prints which button / axis index the
 input layer actually saw.
 
-## The over-bright glow on iPad (open: one draw's shading parts ways on the M2)
+## The over-bright glow on iPad (resolved 2026-10-15)
+
+The Metal `hx()` helper now unpacks half operands by bits into fp32, reusing the GLSL backend's
+conversion instead of native `as_type<half2>`. On the physical M2 iPad, the matched pre-bloom
+frame now has **zero** white pixels in Link's crop (previous build: 13949), with maximum 145
+against 143 on the healthy M3 Pro. His clothing is green and the white halo is gone. The signed
+build was installed and device-executed using scratch saves/settings; the player's original
+three save files and settings were verified byte-identical afterward. See `ipad-glow-issue.md`
+for the measured comparison and `build/glow-half/` for local captures and logs.
+
+The investigation below is historical; the domain and reciprocal clamps were not the fix.
 
 Symptom: in bright doorways Link's tunic and hands blow out to white and the window lights streak; it is
 iPad-only (macOS renders the same frame correctly). The iPad here is Apple M2, the Mac an M3 Pro: two

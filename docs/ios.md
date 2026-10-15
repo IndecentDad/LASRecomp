@@ -85,6 +85,17 @@ The pad hides itself behind the overlay menu; in **Auto** it also hides while a 
 paired gamepad and the touch pad never fight. Off / On / Auto and the size live in the in-game menu, **Display** tab
 ("Touch controls" section), and in `larecomp.ini` as `touch_controls` (0 / 1 / 2) and `touch_scale`.
 
+The stick and face-button diamond are anchored near the bottom corners, using the lower letterbox space on iPad.
+Shoulders are compact pills near the top edges; the centre menu uses a three-line icon. Thin translucent outlines,
+a warm accent on A, and animated press feedback keep the game visible. The size slider changes the controls around
+their edge anchors; drawing and touch targets share the same pixel geometry. Stick motion uses the same travel
+distance on both axes, and opening the overlay releases held touches.
+
+`make build/test_touch_pad && build/test_touch_pad` checks the layout at four landscape sizes and three control
+sizes, simultaneous L+R and stick+A input, and release when the menu opens, using SDL's actual virtual gamepad.
+The redesigned layout was also captured in game on the physical M2 iPad at frame 11002; the run saved
+`build/glow-half/ipad-controls-complete.png` and exited with code 0. Link's clothing remained correctly shaded.
+
 Built by `runtime/ui/touch_pad.mm`, drawn with ImGui into the renderer's foreground draw list and fed the SDL
 touch events ahead of the menu (`runtime/nvn/metal.m`).
 

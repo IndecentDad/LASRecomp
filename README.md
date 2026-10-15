@@ -9,11 +9,12 @@
 > As with anything on the internet, you run the code at your own discretion.
 
 **LAS Recomp** is a static recompilation of *The Legend of Zelda: Link's Awakening* (Nintendo Switch, 2019) into a
-native Windows, macOS and Linux application.
+native Windows, macOS, Linux and iPadOS application.
 
 > [!NOTE]
 > Currently supported platforms:
 > - macOS - Apple Silicon only, Metal graphics backend + MetalFX
+> - iPadOS - locally signed builds, Metal graphics backend; tested on iPad Air M2 ([setup](docs/ios.md))
 > - Windows - x86-64 only, Vulkan graphics backend
 > - Linux - x86-64, Vulkan graphics backend (AppImage)
 > - Linux aarch64 (ARM) - **experimental**: built but untested on real hardware; reports welcome
@@ -35,6 +36,21 @@ https://discord.gg/DhrgdYqdcY
 ## Status
 
 This is a beta release. That means bugs are likely, crashes could occur, randomizer seeds could possibly be unsolvable (dungeon room shuffle modes are especially experimental at this point) and some graphics issues remain (especially in wide and ultrawide aspect ratios). This is a work in progress, hence the beta designation. To report a bug or a possible randomizer logic issue, use either the [Discord](https://discord.gg/DhrgdYqdcY) or a [GitHub issue](https://github.com/peiikai/LASRecomp/issues) - see [CONTRIBUTING.md](CONTRIBUTING.md#reporting-bugs) for what to include.
+
+### iPad improvements
+
+The iPad Air M2 rendering fix restores Link's green clothing and removes the white glow. The Metal
+shader translator now decodes packed half-precision values into full-precision floats by their bits,
+avoiding the native half conversion that produced incorrect lighting on this device. In a matched
+capture before bloom, saturated white pixels in Link's crop fell from 13,949 to zero; indoor and
+outdoor device captures confirmed the result. See the [investigation and measurements](notes/ipad-glow-issue.md).
+
+Touch controls now sit closer to the lower corners, with compact shoulder buttons, translucent styling
+and press feedback. Drawing and hit detection share the same geometry, stick travel is consistent on
+both axes, and opening the menu releases held touches. The signed build completed an automated in-game
+capture on the physical iPad, with existing saves and settings preserved. Local regression tests cover
+all 65,536 half encodings and 12 touch layouts. The tested scenes ran at about 30 FPS; broader game
+compatibility remains subject to the beta limitations below. See [iPad setup and controls](docs/ios.md).
 
 ### Known issues
 
