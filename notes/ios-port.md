@@ -350,3 +350,19 @@ Structural facts worth keeping, because they cut the search down:
   genuinely large (>= 1) finite colour that survives every domain clamp. Nothing that clamps the
   guarded ops' degenerate cases touches it, which means the large value is produced *upstream* of
   them, not by them.
+
+## First matched differential on the colour chain (frame 12000, MarinTarinHouse, both platforms)
+
+`LARECOMP_DBG_FS_HASH=6804ba6e5340c6f9:22f0:0` - the final colour register just before the game's
+own clamp, on the unconditional tail path every surviving fragment executes:
+
+| | blob tile | probed px | mean | max |
+|---|---|---|---|---|
+| macOS | (1280,1216) | 709 | **14.9** | 88 |
+| iPad | (1344,1152) | 4096 | **255.0** | 255 |
+
+So the blow-out is already in that register: ~0.06-0.35 on the Mac against fully saturated on the
+iPad, reproduced in a matched state. That is the anchor for walking backwards along the chain -
+`pc 2250` -> `pc 22d0` -> `pc 20b0` -> `pc 2018` (`log2`) -> `pc 2130` (`exp2`) -> the amount of
+light accumulated into `r0`/`r1`/`r2` - using the same recipe (original input script + fingerprint
+probe), one pc per round, with `tools/cmp_probe.py` isolating the probed blob.
