@@ -243,3 +243,13 @@ one side of a branch, probe with `LARECOMP_DBG_SCALE=1` and *without* the "lit" 
 compare the black-vs-nonblack pattern over Link between platforms - a different pattern is a
 different code path, and the pc of the comparison that chose it is the bug. `LARECOMP_DBG_SCALE`
 is in the tree for the small values on either side.
+
+## Do not compare from build/pass_NNN.png directly
+
+Both sides overwrite the canonical dump paths on every run: `build/pass_NNN.png` on the host and
+`Documents/build/pass_NNN.png` in the device container. A probe run and a normal run write the
+same names, so a "reference" dump silently becomes a probe dump and an analysis is invalidated
+after the fact - this happened twice. `end_pass` knows the frame number and whether a probe is
+active (`maxwell_dbg_hash`/`maxwell_dbg_pc`), so the dumps should carry a run-unique tag; until
+then, copy each dump to a unique name in the same step that pulls or reads it, and never analyse
+from the canonical path.
